@@ -1,0 +1,56 @@
+name: Create release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag matching VERSION in podkop-vpn-failover'
+        required: true
+        default: 'v0.1.4'
+        type: string
+      prerelease:
+        description: 'Mark this GitHub Release as a prerelease'
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate version and shell syntax
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          [[ "${GITHUB_REF}" == "refs/heads/main" ]]
+          version="$(sed -n 's/^VERSION="\([^"]*\)".*/\1/p' podkop-vpn-failover | head -n 1)"
+          [[ -n "${version}" ]]
+          [[ "${RELEASE_TAG}" == "v${version}" ]]
+          sh -n podkop-vpn-failover
+          sh -n podkop-vpn-failover-control
+          sh -n podkop-vpn-failover.init
+          sh -n install.sh
+          sh -n uninstall.sh
+          grep -Fq "## ${version} " CHANGELOG.md
+      - name: Build release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          IS_PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          set -euo pipefail
+          notes="$(awk -v v="${RELEASE_TAG#v}" 'BEGIN {capture=0} index($0, "## " v " ")==1 {capture=1; next} capture && /^## / {exit} capture {print}' CHANGELOG.md)"
+          [[ -n "${notes}" ]]
+          args=(release create "${RELEASE_TAG}" --target "${GITHUB_SHA}" --title "podkop-vpn-failover-owrt ${RELEASE_TAG}" --notes "${notes}")
+          [[ "${IS_PRERELEASE}" != "true" ]] || args+=(--prerelease)
+          gh "${args[@]}"
