@@ -20,4 +20,10 @@ Xiaomi AX3000T, OpenWrt 24.10.5, Forkozz/NetShift 0.9.12:
 
 ## Limits
 
-No physical reboot or LAN application/playback test was performed. Podkop is covered by local functional tests; the physical pilot used Forkozz. OpenWrt 25.12/apk installer behavior still needs hardware validation. Other firmware/backend versions require their own checks. No private client inventory, credentials or router backups are included.
+No physical reboot or LAN application/playback test was performed. The physical failure/rollback pilot used Forkozz; physical Podkop failure injection remains unverified. OpenWrt 25.12/apk installation was exercised during the fleet rollout below; dependency download/install was not needed because curl/jq were already present. Other firmware/backend versions require their own checks. No private client inventory, credentials or router backups are included.
+
+## Fleet installation on 2026-11-06
+
+The published 0.2.0 payload was hash-verified and installed on 16 reachable client routers with configured AWG interfaces. Service running/autostart, RPC, journal and view HTTP 200 were checked after startup grace. Twelve monitored an active healthy AWG; three correctly stayed idle in proxy mode; one stayed idle because its routing backend was already stopped. Existing proxy selections and protected network/backend configurations were preserved. Four SSH-unreachable routers were not changed.
+
+This exercised real Podkop and Forkozz installations on OpenWrt 24.10 (opkg) and 25.12 (apk). No mass failure injection, firmware/backend upgrades or router reboots were performed. GitHub push CI passed for the published payload. Client inventory and private logs are excluded.
