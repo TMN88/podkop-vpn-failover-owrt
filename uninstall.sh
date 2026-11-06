@@ -24,10 +24,12 @@ if [ -x "$INIT" ]; then
     "$INIT" disable >/dev/null 2>&1 || true
 fi
 
+rm -f /www/luci-static/resources/view/vpn-failover.js /usr/libexec/rpcd/vpn-failover /usr/share/luci/menu.d/vpn-failover.json /usr/share/rpcd/acl.d/vpn-failover.json
+# Keep /etc/config/vpn_failover so backend selection survives reinstallation.
 rm -f "$WORKER" "$CONTROL" "$INIT"
 rm -rf "$STATE_DIR" "$LOCK_DIR"
 
-for section in pvf_status pvf_test pvf_logs pvf_config pvf_start pvf_restart pvf_stop; do
+for section in pvf_history pvf_status pvf_test pvf_logs pvf_config pvf_start pvf_restart pvf_stop; do
     uci -q delete "luci.${section}" >/dev/null 2>&1 || true
 done
 uci commit luci >/dev/null 2>&1 || true

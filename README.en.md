@@ -1,58 +1,15 @@
-# podkop-vpn-failover-owrt
+# VPN Failover for Podkop and Forkozz
 
-[Русский](README.md)
+Version 0.2.0, tested on a physical Xiaomi AX3000T (OpenWrt 24.10.5, Forkozz/NetShift 0.9.12). See [Russian instructions](README.md).
 
-A maintained copy of [podkop-vpn-failover](https://github.com/SVTagan/podkop-vpn-failover), with an installer supporting OpenWrt 24.10 and 25.12.
+Supports OpenWrt opkg/apk, existing AmneziaWG `awg*` interfaces and one named VPN section in Podkop or Forkozz/NetShift. Configure `/etc/config/vpn_failover`: `config settings 'main'`, `option backend 'auto'` (or `podkop` / `forkozz`), `option section 'main'`. Restart failover after configuration changes. Auto detection refuses ambiguity. Proxy/subscription nodes are outside this interface failover workflow.
 
-This is an independent project and is not affiliated with Podkop developers. The upstream failover logic is retained: check real traffic over AmneziaWG interfaces and switch `podkop.main.interface` to a healthy reserve.
+LuCI → Services → VPN Failover shows the latest 200 operations: timestamp, backend/section, source/destination, outcome, diagnostics. Read-only authenticated RPC, refresh every 5 seconds. History survives service restarts, is held in RAM and disappears on router reboot. CLI: `podkop-vpn-failover history`, JSON: `podkop-vpn-failover dashboard`.
 
-## Compatibility
+Uses the selected package's UCI `interface` field, its native reload and `${section}-out` runtime binding check. Forkozz uses `/usr/bin/netshift reload` and honors `netshift.settings.config_path`. The selected section must be enabled and in VPN mode. Other configuration is preserved; backend reload can interrupt other sections' connections. HTTPS checks validate interface egress, not actual LAN application playback. Failed transitions attempt verified rollback; unverified rollback stops the current scan.
 
-- **OpenWrt 24.10.x** — `opkg` package manager.
-- **OpenWrt 25.12.x** — `apk` package manager.
-- Podkop must use VPN mode; AmneziaWG interfaces must be named `awg*`.
-- Requires `uci`, procd, `curl`, `awk`, `sort`, `cut`, `sed`, `grep`, and `logger`.
+Installer downloads worker, control/init, RPC, view, menu and ACL, installs curl/jq if missing, optionally luci-app-commands, refreshes rpcd and preserves existing failover enabled/running state. Initial installation stays stopped/disabled. Requires LuCI/rpcd for the journal page.
 
-The installer detects `apk` or `opkg` automatically and uses it for installed-package checks, index updates, and installing `curl` / optional `luci-app-commands`.
+Validation: `python3 tests/test_backend.py`, `node tests/test_view.js`, and `sh -n` on shell files. Mock tests cover backend selection, actual jq binding checks, failover, rollback, external changes, disabled/proxy guards and bounded/escaped JSON history. Physical Forkozz installation, procd start/restart/stop, automatic failover after real active-interface shutdown, verified rollback, authenticated LuCI rendering and denied anonymous RPC were tested. Reboot, physical Podkop operation and LAN application traffic remain unverified.
 
-The first installation leaves the failover service stopped and disabled. Updates preserve the previous service and autostart state.
-
-## Install
-
-On the router, run:
-
-```sh
-uclient-fetch -q -O /tmp/pvf-install.sh https://raw.githubusercontent.com/TMN88/podkop-vpn-failover-owrt/main/install.sh && sh /tmp/pvf-install.sh
-```
-
-You can also download the installer using `curl` or `wget` and then run `sh /tmp/pvf-install.sh`.
-
-To skip adding LuCI Custom Commands, set `INSTALL_LUCI_COMMANDS=0` before running the installer.
-
-Check the VPN pool before enabling the service:
-
-```sh
-podkop-vpn-failover test
-podkop-vpn-failover status
-podkop-vpn-failover-control start
-```
-
-## CLI and logs
-
-```sh
-podkop-vpn-failover status
-podkop-vpn-failover test
-podkop-vpn-failover config
-podkop-vpn-failover logs
-logread | grep podkop-vpn-failover
-```
-
-When `luci-app-commands` is installed, actions are also available under LuCI → System → Custom Commands.
-
-## Testing note
-
-CI runs `sh -n` against the shell scripts. Actual live failover testing on routers running OpenWrt 25.12 is still required; package-manager compatibility alone does not claim that every router setup has been field-tested.
-
-## Upstream and license
-
-Copyright and attribution for the original project remain with the upstream authors. See [upstream](https://github.com/SVTagan/podkop-vpn-failover) and [LICENSE](LICENSE).
+Original authors and MIT license are preserved. [Original project](https://github.com/SVTagan/podkop-vpn-failover).

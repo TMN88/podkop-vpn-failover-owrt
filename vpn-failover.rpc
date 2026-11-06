@@ -1,0 +1,8 @@
+#!/bin/sh
+case "$1" in
+    list) printf '%s\n' '{"status":{}}' ;;
+    call)
+        [ "$2" = status ] || exit 1
+        /usr/bin/podkop-vpn-failover dashboard
+        ;;
+esac

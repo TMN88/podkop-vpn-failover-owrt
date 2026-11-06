@@ -1,0 +1,12 @@
+{
+  "vpn-failover": {
+    "description": "Read VPN failover operations",
+    "read": {
+      "ubus": {
+        "vpn-failover": [
+          "status"
+        ]
+      }
+    }
+  }
+}

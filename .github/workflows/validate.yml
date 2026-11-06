@@ -20,6 +20,9 @@ jobs:
           sh -n podkop-vpn-failover.init
           sh -n install.sh
           sh -n uninstall.sh
+          sh -n vpn-failover.rpc
+          python3 tests/test_backend.py
+          node tests/test_view.js
       - name: Verify package-manager compatibility logic
         run: |
           grep -Fq 'command -v apk' install.sh

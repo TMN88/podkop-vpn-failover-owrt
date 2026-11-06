@@ -1,0 +1,15 @@
+{
+  "admin/services/vpn-failover": {
+    "title": "VPN Failover",
+    "order": 65,
+    "action": {
+      "type": "view",
+      "path": "vpn-failover"
+    },
+    "depends": {
+      "acl": [
+        "vpn-failover"
+      ]
+    }
+  }
+}

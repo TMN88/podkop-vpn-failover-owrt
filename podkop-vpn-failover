@@ -1,9 +1,9 @@
 #!/bin/sh
 
 # podkop-vpn-failover
-# Lightweight AmneziaWG health-check and failover helper for Podkop on OpenWrt.
+# Lightweight AmneziaWG health-check and failover helper for Podkop and Forkozz on OpenWrt.
 
-VERSION="0.1.4"
+VERSION="0.2.0"
 TAG="podkop-vpn-failover"
 
 # Interfaces are discovered automatically from /etc/config/network.
@@ -21,7 +21,7 @@ CANDIDATE_SUCCESS_THRESHOLD=2
 CANDIDATE_RETRY_DELAY=1
 POST_SWITCH_DELAY=4
 
-# Give OpenWrt, Podkop and the VPN interfaces time to settle after this daemon
+# Give OpenWrt and the routing backend and the VPN interfaces time to settle after this daemon
 # starts. No automatic failover is allowed during this window.
 STARTUP_GRACE_PERIOD=120
 
@@ -50,6 +50,78 @@ PROBE_HTTP="000"
 PROBE_TIME="0"
 PROBE_RC=1
 FOREGROUND=0
+BACKEND=""
+SECTION="main"
+CONFIG_PACKAGE=""
+BACKEND_ERROR=""
+HISTORY_FILE="${STATE_DIR}/operations.tsv"
+HISTORY_LIMIT=200
+
+# Configuration is read as data, never sourced as shell code.
+select_backend() {
+    local requested section podkop_present=0 netshift_present=0
+    BACKEND=""; CONFIG_PACKAGE=""
+    requested="$(uci -q get vpn_failover.main.backend 2>/dev/null)"
+    section="$(uci -q get vpn_failover.main.section 2>/dev/null)"
+    SECTION="${section:-main}"
+    BACKEND_ERROR=""
+    case "$SECTION" in ''|*[!a-zA-Z0-9_]*) BACKEND_ERROR="Invalid section name"; return 1 ;; esac
+    uci -q get podkop.main >/dev/null 2>&1 && podkop_present=1
+    uci -q get netshift.settings >/dev/null 2>&1 && netshift_present=1
+    case "${requested:-auto}" in
+        auto)
+            case "${podkop_present}${netshift_present}" in
+                10) BACKEND=podkop ;;
+                01) BACKEND=forkozz ;;
+                *) BACKEND_ERROR="Choose backend explicitly: Podkop/Forkozz missing or both configured"; return 1 ;;
+            esac ;;
+        podkop|forkozz) BACKEND="$requested" ;;
+        *) BACKEND_ERROR="Unknown backend"; return 1 ;;
+    esac
+    case "$BACKEND" in
+        podkop) CONFIG_PACKAGE=podkop; PODKOP_INIT=/etc/init.d/podkop ;;
+        forkozz) CONFIG_PACKAGE=netshift; PODKOP_INIT=/etc/init.d/netshift ;;
+    esac
+    [ "$(uci -q get "${CONFIG_PACKAGE}.${SECTION}" 2>/dev/null)" = section ] || {
+        BACKEND_ERROR="Selected routing section does not exist"; return 1;
+    }
+    SING_BOX_CONFIG="$(uci -q get "${CONFIG_PACKAGE}.settings.config_path" 2>/dev/null)"
+    SING_BOX_CONFIG="${SING_BOX_CONFIG:-/etc/sing-box/config.json}"
+}
+
+backend_reload() {
+    if [ "$BACKEND" = forkozz ]; then
+        /usr/bin/netshift reload
+    else
+        "$PODKOP_INIT" reload
+    fi
+}
+
+operation() {
+    local event="$1" from="$2" to="$3" detail="$4" tmp
+    ensure_state_dir
+    detail="$(printf '%s' "$detail" | tr '\t\r\n' '   ' | cut -c1-1000)"
+    from="$(printf '%s' "$from" | tr '\t\r\n' '   ')"
+    to="$(printf '%s' "$to" | tr '\t\r\n' '   ')"
+    tmp="${HISTORY_FILE}.$$"
+    # One daemon writes; atomic replacement lets readers see complete records.
+    { [ ! -r "$HISTORY_FILE" ] || tail -n "$((HISTORY_LIMIT - 1))" "$HISTORY_FILE"
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$(date '+%Y-%m-%d %H:%M:%S %Z')" "$BACKEND" "$SECTION" "$event" "$from" "$to" "$detail" "$(now_epoch)"
+    } > "$tmp" && chmod 600 "$tmp" && mv "$tmp" "$HISTORY_FILE"
+}
+
+show_dashboard() {
+    local error=""
+    select_backend || error="$BACKEND_ERROR"
+    { [ ! -r "$HISTORY_FILE" ] || cat "$HISTORY_FILE"; } | jq -Rn \
+        --arg backend "$BACKEND" --arg section "$SECTION" \
+        --arg current "$(get_current_interface)" --arg error "$error" \
+        '{backend:$backend,section:$section,current:$current,error:$error,
+          events:([inputs | split("\t") | select(length == 8) |
+          {time:.[0],backend:.[1],section:.[2],event:.[3],from:.[4],to:.[5],detail:.[6],epoch:.[7]}] | reverse)}'
+}
+
 
 say() {
     printf '%s\n' "$*"
@@ -58,12 +130,15 @@ say() {
 log_msg() {
     local level="$1"
     shift
+    operation "$level" "${OP_FROM:-}" "${OP_TO:-}" "$*"
     logger -t "$TAG" -p "daemon.${level}" -- "$*"
     [ "$FOREGROUND" = "1" ] && printf '[%s] %s\n' "$level" "$*" >&2
+    return 0
 }
 
 ensure_state_dir() {
     [ -d "$STATE_DIR" ] || mkdir -p "$STATE_DIR"
+    chmod 700 "$STATE_DIR"
 }
 
 reset_failure_counter() {
@@ -76,15 +151,21 @@ now_epoch() {
 }
 
 podkop_runtime_ready() {
-    "$SING_BOX_INIT" running >/dev/null 2>&1 && [ -r "$SING_BOX_CONFIG" ]
+    [ -z "$BACKEND_ERROR" ] && "$SING_BOX_INIT" running >/dev/null 2>&1 && [ -r "$SING_BOX_CONFIG" ]
 }
 
 get_connection_type() {
-    uci -q get podkop.main.connection_type 2>/dev/null
+    [ -z "$BACKEND_ERROR" ] || return 1
+    [ "$(uci -q get "${CONFIG_PACKAGE}.${SECTION}.enabled" 2>/dev/null)" != 0 ] || return 1
+    case "$(uci -q get "${CONFIG_PACKAGE}.${SECTION}.disabled" 2>/dev/null)" in
+        1|on|true|yes) return 1 ;;
+    esac
+    uci -q get "${CONFIG_PACKAGE}.${SECTION}.connection_type" 2>/dev/null
 }
 
 get_current_interface() {
-    uci -q get podkop.main.interface 2>/dev/null
+    [ -z "$BACKEND_ERROR" ] || return 1
+    uci -q get "${CONFIG_PACKAGE}.${SECTION}.interface" 2>/dev/null
 }
 
 clear_no_reserve_cooldown() {
@@ -251,15 +332,9 @@ verify_podkop_binding() {
     [ "$current" = "$iface" ] || return 1
     [ -r "$SING_BOX_CONFIG" ] || return 1
 
-    if command -v jq >/dev/null 2>&1; then
-        jq -e --arg iface "$iface" \
-            '.outbounds[]? | select(.tag == "main-out") | .bind_interface == $iface' \
-            "$SING_BOX_CONFIG" >/dev/null 2>&1
-        return $?
-    fi
-
-    grep -A5 '"tag": "main-out"' "$SING_BOX_CONFIG" 2>/dev/null \
-        | grep -Fq "\"bind_interface\": \"${iface}\""
+    jq -e --arg iface "$iface" --arg tag "${SECTION}-out" \
+        '[.outbounds[]? | select(.tag == $tag and .type == "direct" and .bind_interface == $iface)] | length == 1' \
+        "$SING_BOX_CONFIG" >/dev/null 2>&1
 }
 
 record_switch() {
@@ -273,31 +348,52 @@ record_switch() {
 }
 
 restore_interface() {
-    local iface="$1"
-    uci set "podkop.main.interface=${iface}" || return 1
-    uci commit podkop || return 1
-    "$PODKOP_INIT" reload >/dev/null 2>&1
+    local iface="$1" expected="$2"
+    [ "$(get_current_interface)" = "$expected" ] || return 1
+    [ "$(get_connection_type)" = vpn ] || return 1
+    uci set "${CONFIG_PACKAGE}.${SECTION}.interface=${iface}" || return 1
+    uci commit "$CONFIG_PACKAGE" || return 1
+    backend_reload >/dev/null 2>&1 || return 1
+    sleep "$POST_SWITCH_DELAY"
+    verify_podkop_binding "$iface"
 }
 
 switch_to_interface() {
     local from="$1" to="$2" current
+    local OP_FROM="$1" OP_TO="$2"
 
+    OP_FROM="$from"; OP_TO="$to"
     current="$(get_current_interface)"
     if [ "$current" != "$from" ]; then
-        log_msg notice "Podkop VPN changed externally (${from} -> ${current:-unset}); aborting failover candidate ${to}"
+        log_msg notice "${BACKEND:-VPN} VPN changed externally (${from} -> ${current:-unset}); aborting failover candidate ${to}"
         return 2
     fi
 
-    log_msg notice "Switching Podkop VPN: ${from} -> ${to}"
+    log_msg notice "Switching ${BACKEND:-VPN} VPN: ${from} -> ${to}"
 
-    if ! uci set "podkop.main.interface=${to}" || ! uci commit podkop; then
-        log_msg err "Failed to update Podkop UCI interface to ${to}"
-        return 1
+    [ "$(get_connection_type)" = vpn ] || return 2
+    if ! uci set "${CONFIG_PACKAGE}.${SECTION}.interface=${to}"; then
+        log_msg err "Failed to update ${BACKEND:-VPN} UCI interface to ${to}"
+        return 2
+    fi
+    if ! uci commit "$CONFIG_PACKAGE"; then
+        log_msg err "Failed to commit ${BACKEND:-VPN} interface; restoring ${from}"
+        if restore_interface "$from" "$to"; then
+            operation rollback "$to" "$from" "Previous binding restored after commit failure"
+            return 1
+        fi
+        operation rollback_failed "$to" "$from" "Commit failure; rollback could not be verified"
+        return 2
     fi
 
-    if ! "$PODKOP_INIT" reload >/dev/null 2>&1; then
-        log_msg err "Podkop reload failed after selecting ${to}; restoring ${from}"
-        restore_interface "$from" >/dev/null 2>&1
+    if ! backend_reload >/dev/null 2>&1; then
+        log_msg err "${BACKEND:-VPN} reload failed after selecting ${to}; restoring ${from}"
+        if restore_interface "$from" "$to"; then
+            operation rollback "$to" "$from" "Previous binding restored"
+        else
+            operation rollback_failed "$to" "$from" "Rollback could not be verified; stopping scan"
+            return 2
+        fi
         mark_quarantine "$to"
         return 1
     fi
@@ -305,32 +401,43 @@ switch_to_interface() {
     sleep "$POST_SWITCH_DELAY"
 
     current="$(get_current_interface)"
-    if [ "$current" != "$to" ]; then
-        log_msg notice "Podkop VPN changed externally during failover (${to} -> ${current:-unset}); leaving external selection untouched"
+    if [ "$current" != "$to" ] || [ "$(get_connection_type)" != vpn ]; then
+        log_msg notice "${BACKEND:-VPN} VPN changed externally during failover (${to} -> ${current:-unset}); leaving external selection untouched"
         return 2
     fi
 
     if ! verify_podkop_binding "$to"; then
-        log_msg err "Podkop did not bind main-out to ${to}; restoring ${from}"
-        restore_interface "$from" >/dev/null 2>&1
+        log_msg err "${BACKEND:-VPN} did not bind ${SECTION}-out to ${to}; restoring ${from}"
+        if restore_interface "$from" "$to"; then
+            operation rollback "$to" "$from" "Previous binding restored"
+        else
+            operation rollback_failed "$to" "$from" "Rollback could not be verified; stopping scan"
+            return 2
+        fi
         mark_quarantine "$to"
         return 1
     fi
 
     if ! candidate_is_healthy "$to"; then
         current="$(get_current_interface)"
-        if [ "$current" != "$to" ]; then
-            log_msg notice "Podkop VPN changed externally during post-switch check (${to} -> ${current:-unset}); leaving external selection untouched"
+        if [ "$current" != "$to" ] || [ "$(get_connection_type)" != vpn ]; then
+            log_msg notice "${BACKEND:-VPN} VPN changed externally during post-switch check (${to} -> ${current:-unset}); leaving external selection untouched"
             return 2
         fi
         log_msg err "Post-switch health-check failed for ${to}; restoring ${from}"
-        restore_interface "$from" >/dev/null 2>&1
+        if restore_interface "$from" "$to"; then
+            operation rollback "$to" "$from" "Previous binding restored"
+        else
+            operation rollback_failed "$to" "$from" "Rollback could not be verified; stopping scan"
+            return 2
+        fi
         mark_quarantine "$to"
         return 1
     fi
 
     clear_quarantine "$to"
     record_switch "$from" "$to"
+    operation success "$from" "$to" "Runtime binding and HTTPS health checks passed"
     log_msg notice "Failover completed successfully: ${from} -> ${to}"
     return 0
 }
@@ -343,7 +450,7 @@ try_candidates_pass() {
 
         current="$(get_current_interface)"
         if [ "$current" != "$failed" ]; then
-            log_msg notice "Podkop VPN changed externally (${failed} -> ${current:-unset}); aborting failover scan"
+            log_msg notice "${BACKEND:-VPN} VPN changed externally (${failed} -> ${current:-unset}); aborting failover scan"
             return 2
         fi
 
@@ -435,6 +542,11 @@ run_daemon() {
     local startup_until now cooldown_until
 
     FOREGROUND=1
+    if [ -n "$BACKEND_ERROR" ]; then
+        log_msg err "$BACKEND_ERROR"
+        exit 1
+    fi
+    command -v jq >/dev/null 2>&1 || { log_msg err "jq is required"; exit 1; }
 
     if ! acquire_daemon_lock; then
         log_msg err "Another ${TAG} daemon appears to be running"
@@ -471,7 +583,7 @@ run_daemon() {
             reset_failure_counter
             clear_no_reserve_cooldown
             if [ "$idle_reason" != "podkop-runtime-not-ready" ]; then
-                log_msg warning "Podkop runtime is not ready (sing-box stopped or config missing); failover is idle"
+                log_msg warning "${BACKEND:-VPN} runtime is not ready (sing-box stopped or config missing); failover is idle"
                 idle_reason="podkop-runtime-not-ready"
             fi
             sleep "$CHECK_INTERVAL"
@@ -485,7 +597,7 @@ run_daemon() {
             reset_failure_counter
             clear_no_reserve_cooldown
             if [ "$idle_reason" != "mode:${mode:-unset}" ]; then
-                log_msg warning "Podkop connection type is '${mode:-unset}', not 'vpn'; failover is idle"
+                log_msg warning "${BACKEND:-VPN} connection type is '${mode:-unset}', not 'vpn'; failover is idle"
                 idle_reason="mode:${mode:-unset}"
             fi
             sleep "$CHECK_INTERVAL"
@@ -500,7 +612,7 @@ run_daemon() {
             reset_failure_counter
             clear_no_reserve_cooldown
             if [ "$idle_reason" != "interface:unset" ]; then
-                log_msg err "Podkop main interface is not configured"
+                log_msg err "${BACKEND:-VPN} main interface is not configured"
                 idle_reason="interface:unset"
             fi
             sleep "$CHECK_INTERVAL"
@@ -515,7 +627,7 @@ run_daemon() {
                 reset_failure_counter
                 clear_no_reserve_cooldown
                 if [ "$idle_reason" != "interface:${current}" ]; then
-                    log_msg warning "Podkop main interface '${current}' does not match ${INTERFACE_PREFIX}*; failover is idle"
+                    log_msg warning "${BACKEND:-VPN} main interface '${current}' does not match ${INTERFACE_PREFIX}*; failover is idle"
                     idle_reason="interface:${current}"
                 fi
                 sleep "$CHECK_INTERVAL"
@@ -526,7 +638,7 @@ run_daemon() {
         idle_reason=""
 
         if [ -n "$previous_current" ] && [ "$current" != "$previous_current" ]; then
-            log_msg notice "Podkop active VPN changed outside failover: ${previous_current} -> ${current}; resetting failure counter"
+            log_msg notice "${BACKEND:-VPN} active VPN changed outside failover: ${previous_current} -> ${current}; resetting failure counter"
             failures=0
             reset_failure_counter
             clear_no_reserve_cooldown
@@ -578,7 +690,7 @@ run_daemon() {
                     ;;
                 2)
                     clear_no_reserve_cooldown
-                    log_msg notice "Failover scan stopped because Podkop VPN was changed externally"
+                    log_msg notice "Failover scan stopped because ${BACKEND:-VPN} VPN was changed externally"
                     ;;
             esac
 
@@ -589,10 +701,10 @@ run_daemon() {
         if ! is_discovered_interface "$current"; then
             failures=$((failures + 1))
             printf '%s\n' "$failures" > "$FAIL_FILE"
-            log_msg warning "Podkop VPN interface '${current}' is missing or is no longer AmneziaWG: ${failures}/${FAIL_THRESHOLD}"
+            log_msg warning "${BACKEND:-VPN} VPN interface '${current}' is missing or is no longer AmneziaWG: ${failures}/${FAIL_THRESHOLD}"
 
             if [ "$failures" -ge "$FAIL_THRESHOLD" ]; then
-                log_msg err "Confirmed unavailable Podkop VPN interface ${current}; starting failover"
+                log_msg err "Confirmed unavailable ${BACKEND:-VPN} VPN interface ${current}; starting failover"
                 perform_failover "$current"
                 rc=$?
                 failures=0
@@ -608,7 +720,7 @@ run_daemon() {
                         ;;
                     2)
                         clear_no_reserve_cooldown
-                        log_msg notice "Failover scan stopped because Podkop VPN was changed externally"
+                        log_msg notice "Failover scan stopped because ${BACKEND:-VPN} VPN was changed externally"
                         ;;
                 esac
             fi
@@ -647,7 +759,7 @@ run_daemon() {
                         ;;
                     2)
                         clear_no_reserve_cooldown
-                        log_msg notice "Failover scan stopped because Podkop VPN was changed externally"
+                        log_msg notice "Failover scan stopped because ${BACKEND:-VPN} VPN was changed externally"
                         ;;
                 esac
             fi
@@ -702,7 +814,8 @@ show_status() {
     failures="$(cat "$FAIL_FILE" 2>/dev/null)"
     [ -n "$failures" ] || failures=0
 
-    say "Podkop VPN Failover v${VERSION}"
+    say "VPN Failover v${VERSION} (${BACKEND:-unavailable}, section ${SECTION})"
+    [ -z "$BACKEND_ERROR" ] || say "Configuration error: $BACKEND_ERROR"
     if service_running; then
         say "Service: running"
     else
@@ -716,13 +829,13 @@ show_status() {
     fi
 
     if podkop_runtime_ready; then
-        say "Podkop runtime: ready"
+        say "${BACKEND:-VPN} runtime: ready"
     else
-        say "Podkop runtime: not ready"
+        say "${BACKEND:-VPN} runtime: not ready"
     fi
 
-    say "Podkop connection type: ${mode:-not configured}"
-    say "Current Podkop VPN: ${current:-not configured}"
+    say "${BACKEND:-VPN} connection type: ${mode:-not configured}"
+    say "Current ${BACKEND:-VPN} VPN: ${current:-not configured}"
     say "Failure counter: ${failures}/${FAIL_THRESHOLD}"
 
     recovery_remaining="$(no_reserve_cooldown_remaining 2>/dev/null)"
@@ -743,7 +856,7 @@ show_status() {
 }
 
 show_test() {
-    say "Podkop VPN Failover v${VERSION} - live VPN test"
+    say "${BACKEND:-VPN} VPN Failover v${VERSION} - live VPN test"
     say "Health URL: ${TEST_URL}"
     say ""
     print_interfaces
@@ -755,7 +868,7 @@ show_logs() {
 
 show_config() {
     cat <<EOF
-Podkop VPN Failover v${VERSION}
+${BACKEND:-VPN} VPN Failover v${VERSION}
 INTERFACE_PREFIX=${INTERFACE_PREFIX}
 TEST_URL=${TEST_URL}
 CHECK_INTERVAL=${CHECK_INTERVAL}
@@ -768,6 +881,10 @@ POST_SWITCH_DELAY=${POST_SWITCH_DELAY}
 STARTUP_GRACE_PERIOD=${STARTUP_GRACE_PERIOD}
 NO_RESERVE_RETRY_INTERVAL=${NO_RESERVE_RETRY_INTERVAL}
 QUARANTINE_SECONDS=${QUARANTINE_SECONDS}
+BACKEND=${BACKEND}
+SECTION=${SECTION}
+BACKEND_ERROR=${BACKEND_ERROR}
+HISTORY_LIMIT=${HISTORY_LIMIT}
 EOF
 }
 
@@ -777,14 +894,18 @@ Usage: $0 COMMAND
 
 Commands:
   daemon       Run the continuous health-check/failover loop (used by procd)
-  status       Show service state, Podkop mode, current VPN and live interface health
+  status       Show service state, ${BACKEND:-VPN} mode, current VPN and live interface health
   test         Run a live health-check for all discovered awg* interfaces
   check IFACE  Check one interface; returns 0 only for HTTP 204
+  history      Show recorded operations (last 200, cleared on reboot)
+  dashboard    Read-only JSON snapshot for LuCI
   logs         Show the latest failover log entries
   config       Show built-in failover settings
   version      Show version
 EOF
 }
+
+select_backend || :
 
 case "${1:-}" in
     daemon)
@@ -804,6 +925,12 @@ case "${1:-}" in
         fi
         say "${2}: FAILED curl=${PROBE_RC} HTTP=${PROBE_HTTP} time=${PROBE_TIME}s"
         exit 1
+        ;;
+    dashboard)
+        show_dashboard
+        ;;
+    history)
+        if [ -r "$HISTORY_FILE" ]; then cat "$HISTORY_FILE"; else say "No operations recorded yet."; fi
         ;;
     logs)
         show_logs

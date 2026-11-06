@@ -55,6 +55,7 @@ pkg_install() {
 
 need_update=0
 pkg_installed curl || need_update=1
+pkg_installed jq || need_update=1
 if [ "$INSTALL_LUCI_COMMANDS" = "1" ] && ! pkg_installed luci-app-commands; then need_update=1; fi
 if [ "$need_update" -eq 1 ]; then
     info "Updating package indexes (${PKG_MANAGER})..."
@@ -66,22 +67,46 @@ if ! pkg_installed curl; then
     pkg_install curl || fail "curl installation failed."
 fi
 
+if ! pkg_installed jq; then
+    pkg_install jq || fail "jq installation failed."
+fi
+
 for cmd in logger awk sort cut sed grep; do
     command -v "$cmd" >/dev/null 2>&1 || fail "$cmd is required."
 done
 
-if ! command -v podkop >/dev/null 2>&1 && [ ! -x /usr/bin/podkop ]; then fail "Podkop is not installed."; fi
-[ -x /etc/init.d/podkop ] || fail "Podkop init service was not found at /etc/init.d/podkop."
-
-connection_type="$(uci -q get podkop.main.connection_type 2>/dev/null)"
-if [ "$connection_type" != "vpn" ]; then
-    warn "podkop.main.connection_type is '${connection_type:-unset}', not 'vpn'. The failover daemon will stay idle until Podkop main uses VPN mode."
+# Reject ambiguous auto-detection before changing the installation.
+backend="$(uci -q get vpn_failover.main.backend 2>/dev/null)"
+section="$(uci -q get vpn_failover.main.section 2>/dev/null)"
+section="${section:-main}"
+case "$section" in *[!a-zA-Z0-9_]*) fail "Invalid section name." ;; esac
+if [ "${backend:-auto}" = auto ]; then
+    podkop_present=0; netshift_present=0
+    uci -q get podkop.main >/dev/null 2>&1 && podkop_present=1
+    uci -q get netshift.settings >/dev/null 2>&1 && netshift_present=1
+    case "${podkop_present}${netshift_present}" in
+        10) backend=podkop ;;
+        01) backend=forkozz ;;
+        *) fail "Set vpn_failover.main.backend to podkop or forkozz explicitly." ;;
+    esac
 fi
+case "$backend" in
+    podkop) package=podkop ;;
+    forkozz) package=netshift ;;
+    *) fail "Unknown backend." ;;
+esac
+[ -x "/etc/init.d/$package" ] || fail "Backend init service is missing."
+[ "$backend" != forkozz ] || [ -x /usr/bin/netshift ] || fail "NetShift executable is missing."
+[ "$(uci -q get "$package.$section" 2>/dev/null)" = section ] || fail "Routing section does not exist."
 
 TMP_WORKER="/tmp/${TAG}.worker.$$"
 TMP_CONTROL="/tmp/${TAG}.control.$$"
 TMP_INIT="/tmp/${TAG}.init.$$"
-trap 'rm -f "$TMP_WORKER" "$TMP_CONTROL" "$TMP_INIT"' EXIT INT TERM
+TMP_UI="/tmp/${TAG}.ui.$$"
+TMP_RPC="/tmp/${TAG}.rpc.$$"
+TMP_MENU="/tmp/${TAG}.menu.$$"
+TMP_ACL="/tmp/${TAG}.acl.$$"
+trap 'rm -f "$TMP_WORKER" "$TMP_CONTROL" "$TMP_INIT" "$TMP_UI" "$TMP_RPC" "$TMP_MENU" "$TMP_ACL"' EXIT INT TERM
 
 info "Downloading worker..."
 fetch "${BASE_URL}/podkop-vpn-failover" "$TMP_WORKER" || fail "Failed to download worker from ${BASE_URL}."
@@ -97,6 +122,15 @@ fetch "${BASE_URL}/podkop-vpn-failover.init" "$TMP_INIT" || fail "Failed to down
 /bin/sh -n "$TMP_CONTROL" || fail "Downloaded control wrapper failed shell syntax validation."
 /bin/sh -n "$TMP_INIT" || fail "Downloaded init script failed shell syntax validation."
 grep -q '^# podkop-vpn-failover$' "$TMP_WORKER" || fail "Downloaded worker does not look like podkop-vpn-failover."
+
+fetch "${BASE_URL}/vpn-failover.js" "$TMP_UI" || fail "Failed to download LuCI view."
+fetch "${BASE_URL}/vpn-failover.rpc" "$TMP_RPC" || fail "Failed to download RPC."
+fetch "${BASE_URL}/luci-menu.json" "$TMP_MENU" || fail "Failed to download menu."
+fetch "${BASE_URL}/luci-acl.json" "$TMP_ACL" || fail "Failed to download ACL."
+[ -s "$TMP_UI" ] || fail "Empty LuCI view."
+/bin/sh -n "$TMP_RPC" || fail "Invalid RPC shell syntax."
+jq -e 'type == "object"' "$TMP_MENU" >/dev/null || fail "Invalid menu JSON."
+jq -e 'type == "object"' "$TMP_ACL" >/dev/null || fail "Invalid ACL JSON."
 
 existing_install=0
 was_running=0
@@ -115,6 +149,25 @@ cp "$TMP_CONTROL" "$CONTROL_DST" || fail "Failed to copy ${CONTROL_DST}."
 chmod 0755 "$CONTROL_DST" || fail "Failed to set permissions on ${CONTROL_DST}."
 cp "$TMP_INIT" "$INIT_DST" || fail "Failed to copy ${INIT_DST}."
 chmod 0755 "$INIT_DST" || fail "Failed to set permissions on ${INIT_DST}."
+
+mkdir -p /www/luci-static/resources/view /usr/libexec/rpcd /usr/share/luci/menu.d /usr/share/rpcd/acl.d || fail "Cannot create UI directories."
+cp "$TMP_UI" /www/luci-static/resources/view/vpn-failover.js || fail "Cannot install view."
+cp "$TMP_RPC" /usr/libexec/rpcd/vpn-failover || fail "Cannot install RPC."
+cp "$TMP_MENU" /usr/share/luci/menu.d/vpn-failover.json || fail "Cannot install menu."
+cp "$TMP_ACL" /usr/share/rpcd/acl.d/vpn-failover.json || fail "Cannot install ACL."
+chmod 0755 /usr/libexec/rpcd/vpn-failover || fail "Cannot set RPC permissions."
+chmod 0644 /www/luci-static/resources/view/vpn-failover.js /usr/share/luci/menu.d/vpn-failover.json /usr/share/rpcd/acl.d/vpn-failover.json || fail "Cannot set UI permissions."
+if ! uci -q get vpn_failover.main >/dev/null 2>&1; then
+    [ -e /etc/config/vpn_failover ] || touch /etc/config/vpn_failover || fail "Cannot create UCI config file."
+    uci set vpn_failover.main=settings && uci set vpn_failover.main.backend=auto && uci set vpn_failover.main.section=main && uci commit vpn_failover || fail "Cannot create settings."
+fi
+/etc/init.d/rpcd restart || fail "Cannot refresh rpcd."
+rpc_ready=0
+for attempt in 1 2 3 4 5 6 7 8 9 10; do
+    if ubus list vpn-failover 2>/dev/null | grep -qx vpn-failover; then rpc_ready=1; break; fi
+    sleep 1
+done
+[ "$rpc_ready" = 1 ] || fail "VPN Failover RPC did not register after rpcd restart."
 
 if [ "$INSTALL_LUCI_COMMANDS" = "1" ] && ! pkg_installed luci-app-commands; then
     info "Installing luci-app-commands..."
@@ -135,6 +188,7 @@ if [ "$INSTALL_LUCI_COMMANDS" = "1" ]; then
     info "Adding LuCI Custom Commands entries..."
     configure_luci_command pvf_status  'VPN Failover: Status'         '/usr/bin/podkop-vpn-failover status' || warn "Could not configure status command."
     configure_luci_command pvf_test    'VPN Failover: Test all VPNs'  '/usr/bin/podkop-vpn-failover test' || warn "Could not configure test command."
+    configure_luci_command pvf_history 'VPN Failover: Operations' '/usr/bin/podkop-vpn-failover history' || warn "Could not configure history command."
     configure_luci_command pvf_logs    'VPN Failover: Logs'            '/usr/bin/podkop-vpn-failover logs' || warn "Could not configure logs command."
     configure_luci_command pvf_config  'VPN Failover: Show settings'  '/usr/bin/podkop-vpn-failover config' || warn "Could not configure config command."
     configure_luci_command pvf_start   'VPN Failover: Enable + Start' '/usr/bin/podkop-vpn-failover-control start' || warn "Could not configure start command."
@@ -155,7 +209,7 @@ else
     "$INIT_DST" stop >/dev/null 2>&1 || true
 fi
 
-rm -f "$TMP_WORKER" "$TMP_CONTROL" "$TMP_INIT"
+rm -f "$TMP_WORKER" "$TMP_CONTROL" "$TMP_INIT" "$TMP_UI" "$TMP_RPC" "$TMP_MENU" "$TMP_ACL"
 trap - EXIT INT TERM
 info "Installed ${TAG}."
 if [ "$existing_install" -eq 1 ]; then
@@ -166,3 +220,5 @@ else
     printf 'Then enable with: /usr/bin/podkop-vpn-failover-control start\n'
 fi
 [ "$INSTALL_LUCI_COMMANDS" = "1" ] && printf 'LuCI actions: System -> Custom Commands.\n'
+
+printf 'Operations journal: LuCI -> Services -> VPN Failover (sign in again if needed).\n'
