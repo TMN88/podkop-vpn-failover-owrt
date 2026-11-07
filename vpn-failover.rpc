@@ -5,6 +5,37 @@ CONTROL=/usr/bin/podkop-vpn-failover-control
 INIT=/etc/init.d/podkop-vpn-failover
 DIR=/tmp/podkop-vpn-failover-ui
 
+run_bounded() {
+    if command -v timeout >/dev/null 2>&1; then
+        timeout 180 "$@" > "$DIR/output" 2>&1
+        return $?
+    fi
+    # Minimal OpenWrt builds may omit timeout. Guard only this child process;
+    # checking /proc start time prevents signalling a reused PID.
+    "$@" > "$DIR/output" 2>&1 &
+    command_pid=$!
+    identity="$(awk '{print $22}' "/proc/$command_pid/stat" 2>/dev/null)"
+    printf '0\n' > "$DIR/timedout"
+    (
+        sleep 180 &
+        sleeper=$!
+        trap 'kill "$sleeper" 2>/dev/null || :; exit 0' TERM INT
+        wait "$sleeper" || exit 0
+        current="$(awk '{print $22}' "/proc/$command_pid/stat" 2>/dev/null)"
+        if [ -n "$identity" ] && [ "$current" = "$identity" ]; then
+            printf '1\n' > "$DIR/timedout"
+            kill -TERM "$command_pid" 2>/dev/null || :
+        fi
+    ) >/dev/null 2>&1 &
+    timer_pid=$!
+    wait "$command_pid"
+    result=$?
+    kill "$timer_pid" 2>/dev/null || :
+    wait "$timer_pid" 2>/dev/null || :
+    [ "$(cat "$DIR/timedout" 2>/dev/null)" != 1 ] || result=124
+    return "$result"
+}
+
 lock_fresh() {
     [ -d "$DIR/lock" ] || return 1
     now="$(date +%s)"
@@ -36,8 +67,8 @@ case "${1:-}" in
         # Private entry point: fixed commands only, never execute user-supplied shell text.
         trap 'rm -f "$DIR/lock/created"; rmdir "$DIR/lock" 2>/dev/null || :' EXIT
         case "${2:-}" in
-            start|stop|restart) timeout 180 "$CONTROL" "$2" > "$DIR/output" 2>&1 ;;
-            status|test|config) timeout 180 "$PROG" "$2" > "$DIR/output" 2>&1 ;;
+            start|stop|restart) run_bounded "$CONTROL" "$2" ;;
+            status|test|config) run_bounded "$PROG" "$2" ;;
             *) exit 1 ;;
         esac
         printf '%s\n' "$?" > "$DIR/code"

@@ -35,3 +35,5 @@ Local checks cover all six management/query buttons, asynchronous job handling, 
 On the existing physical Forkozz pilot, verified the unified page under Services, browser-triggered stop/start/restart and settings, actual tunnel checks, collapsible Russian operation history and an actual downloaded diagnostic JSON. The diagnostic file was parsed and validated. Anonymous management and arbitrary actions were denied. Protected network, DHCP, firewall, Tailscale and NetShift configurations remained unchanged. Service and autostart were restored to running/enabled.
 
 The background runner uses setsid when present and otherwise a shell that ignores SIGHUP; no nohup dependency is required. Commands are limited to fixed executable paths and a fixed action whitelist with a timeout. No VPN keys, subscription URLs or complete router configurations are read for diagnostic downloads.
+
+Minimal MIPS/OpenWrt validation: asynchronous config execution succeeded without nohup, stat or timeout. The runner falls back to a shell watchdog and checks the child process start identity before signalling it.
