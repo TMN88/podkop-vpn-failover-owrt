@@ -6,7 +6,7 @@ on:
       tag:
         description: 'Release tag matching VERSION in podkop-vpn-failover'
         required: true
-        default: 'v0.2.0'
+        default: 'v0.2.1'
         type: string
       prerelease:
         description: 'Mark this GitHub Release as a prerelease'
@@ -43,6 +43,7 @@ jobs:
           sh -n uninstall.sh
           sh -n vpn-failover.rpc
           python3 tests/test_backend.py
+          python3 tests/test_rpc.py
           node tests/test_view.js
           grep -Fq "## ${version} " CHANGELOG.md
       - name: Build release notes

@@ -1,8 +1,78 @@
 #!/bin/sh
-case "$1" in
-    list) printf '%s\n' '{"status":{}}' ;;
-    call)
-        [ "$2" = status ] || exit 1
-        /usr/bin/podkop-vpn-failover dashboard
+umask 077
+PROG=/usr/bin/podkop-vpn-failover
+CONTROL=/usr/bin/podkop-vpn-failover-control
+INIT=/etc/init.d/podkop-vpn-failover
+DIR=/tmp/podkop-vpn-failover-ui
+
+lock_fresh() {
+    [ -d "$DIR/lock" ] || return 1
+    now="$(date +%s)"
+    stamp="$(stat -c %Y "$DIR/lock" 2>/dev/null)"
+    case "$stamp" in ''|*[!0-9]*) stamp="$now" ;; esac
+    [ "$((now - stamp))" -lt 240 ]
+}
+
+snapshot() {
+    running=false; enabled=false; runtime=false
+    "$INIT" running >/dev/null 2>&1 && running=true
+    "$INIT" enabled >/dev/null 2>&1 && enabled=true
+    /etc/init.d/sing-box running >/dev/null 2>&1 && runtime=true
+    "$PROG" dashboard | jq --arg version "$("$PROG" version)" \
+        --argjson running "$running" --argjson enabled "$enabled" --argjson runtime "$runtime" \
+        '. + {version:$version,running:$running,enabled:$enabled,runtime:$runtime}'
+}
+job() {
+    running=false; lock_fresh && running=true
+    action="$(cat "$DIR/action" 2>/dev/null)"
+    code="$(cat "$DIR/code" 2>/dev/null)"
+    case "$code" in ''|*[!0-9]*) code=null ;; esac
+    output="$(head -c 32768 "$DIR/output" 2>/dev/null)"
+    jq -n --arg action "$action" --arg output "$output" --argjson running "$running" --argjson code "$code" \
+        '{action:$action,running:$running,code:$code,output:$output}'
+}
+case "${1:-}" in
+    __job)
+        # Private entry point: fixed commands only, never execute user-supplied shell text.
+        trap 'rmdir "$DIR/lock" 2>/dev/null || :' EXIT
+        case "${2:-}" in
+            start|stop|restart) timeout 180 "$CONTROL" "$2" > "$DIR/output" 2>&1 ;;
+            status|test|config) timeout 180 "$PROG" "$2" > "$DIR/output" 2>&1 ;;
+            *) exit 1 ;;
+        esac
+        printf '%s\n' "$?" > "$DIR/code"
         ;;
+    list) printf '%s\n' '{"status":{},"job":{},"diagnostics":{},"run":{"action":"String"}}' ;;
+    call)
+        case "${2:-}" in
+            status) snapshot ;;
+            job) job ;;
+            diagnostics)
+                snapshot | jq --arg generated "$(date -Iseconds)" --arg config "$("$PROG" config)" \
+                    '{format:"vpn-failover-diagnostics-v1",generated:$generated,snapshot:.,settings:$config}'
+                ;;
+            run)
+                action="$(cat | jq -er '.action | select(type == "string")')" || exit 1
+                case "$action" in start|stop|restart|status|test|config) ;; *) printf '%s\n' '{"accepted":false,"error":"Unknown action"}'; exit 0 ;; esac
+                mkdir -p "$DIR"
+                if ! mkdir "$DIR/lock" 2>/dev/null; then
+                    if lock_fresh; then
+                        printf '%s\n' '{"accepted":false,"error":"Another operation is running"}'; exit 0
+                    fi
+                    rmdir "$DIR/lock" 2>/dev/null && mkdir "$DIR/lock" || exit 1
+                fi
+                printf '%s\n' "$action" > "$DIR/action"
+                : > "$DIR/output"; : > "$DIR/code"
+                if command -v setsid >/dev/null 2>&1; then
+                    setsid sh "$0" __job "$action" >/dev/null 2>&1 < /dev/null &
+                else
+                    (trap '' HUP; exec sh "$0" __job "$action") >/dev/null 2>&1 < /dev/null &
+                fi
+                printf '%s\n' "$!" > "$DIR/pid"
+                printf '%s\n' '{"accepted":true}'
+                ;;
+            *) exit 1 ;;
+        esac
+        ;;
+    *) exit 1 ;;
 esac

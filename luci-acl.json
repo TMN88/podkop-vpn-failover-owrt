@@ -1,10 +1,19 @@
 {
   "vpn-failover": {
-    "description": "Read VPN failover operations",
+    "description": "VPN Failover status and management",
     "read": {
       "ubus": {
         "vpn-failover": [
-          "status"
+          "status",
+          "job",
+          "diagnostics"
+        ]
+      }
+    },
+    "write": {
+      "ubus": {
+        "vpn-failover": [
+          "run"
         ]
       }
     }

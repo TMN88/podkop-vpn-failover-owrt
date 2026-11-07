@@ -1,3 +1,11 @@
+## 0.2.1 (2026-11-07)
+
+- Unified Services / VPN Failover page: service status, start/stop/restart, tunnel tests and current settings.
+- Asynchronous commands with bounded execution time and command output on the page.
+- Collapsible operation history, plain Russian explanations and expandable original diagnostics.
+- Download diagnostic JSON without VPN keys or full router configurations.
+- Separate read and management RPC permissions.
+
 ## 0.2.0 (2026-11-06)
 
 - LuCI read-only operations journal with automatic refresh, timestamps, tunnel transitions and outcomes.

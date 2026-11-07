@@ -27,3 +27,11 @@ No physical reboot or LAN application/playback test was performed. The physical 
 The published 0.2.0 payload was hash-verified and installed on 16 reachable client routers with configured AWG interfaces. Service running/autostart, RPC, journal and view HTTP 200 were checked after startup grace. Twelve monitored an active healthy AWG; three correctly stayed idle in proxy mode; one stayed idle because its routing backend was already stopped. Existing proxy selections and protected network/backend configurations were preserved. Four SSH-unreachable routers were not changed.
 
 This exercised real Podkop and Forkozz installations on OpenWrt 24.10 (opkg) and 25.12 (apk). No mass failure injection, firmware/backend upgrades or router reboots were performed. GitHub push CI passed for the published payload. Client inventory and private logs are excluded.
+
+## Unified page 0.2.1 (2026-11-07)
+
+Local checks cover all six management/query buttons, asynchronous job handling, rejected operations, empty history, preserved collapse state, text safety and downloaded JSON generation. The real RPC action schema, invalid/malicious action rejection and separation of read/write permissions are tested.
+
+On the existing physical Forkozz pilot, verified the unified page under Services, browser-triggered stop/start/restart and settings, actual tunnel checks, collapsible Russian operation history and an actual downloaded diagnostic JSON. The diagnostic file was parsed and validated. Anonymous management and arbitrary actions were denied. Protected network, DHCP, firewall, Tailscale and NetShift configurations remained unchanged. Service and autostart were restored to running/enabled.
+
+The background runner uses setsid when present and otherwise a shell that ignores SIGHUP; no nohup dependency is required. Commands are limited to fixed executable paths and a fixed action whitelist with a timeout. No VPN keys, subscription URLs or complete router configurations are read for diagnostic downloads.
