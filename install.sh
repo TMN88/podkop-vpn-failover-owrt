@@ -71,7 +71,7 @@ if ! pkg_installed jq; then
     pkg_install jq || fail "jq installation failed."
 fi
 
-for cmd in logger awk sort cut sed grep timeout stat; do
+for cmd in logger awk sort cut sed grep timeout; do
     command -v "$cmd" >/dev/null 2>&1 || fail "$cmd is required."
 done
 

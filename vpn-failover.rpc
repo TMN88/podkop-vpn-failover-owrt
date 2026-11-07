@@ -8,8 +8,8 @@ DIR=/tmp/podkop-vpn-failover-ui
 lock_fresh() {
     [ -d "$DIR/lock" ] || return 1
     now="$(date +%s)"
-    stamp="$(stat -c %Y "$DIR/lock" 2>/dev/null)"
-    case "$stamp" in ''|*[!0-9]*) stamp="$now" ;; esac
+    stamp="$(cat "$DIR/lock/created" 2>/dev/null)"
+    case "$stamp" in ''|*[!0-9]*) return 0 ;; esac
     [ "$((now - stamp))" -lt 240 ]
 }
 
@@ -34,7 +34,7 @@ job() {
 case "${1:-}" in
     __job)
         # Private entry point: fixed commands only, never execute user-supplied shell text.
-        trap 'rmdir "$DIR/lock" 2>/dev/null || :' EXIT
+        trap 'rm -f "$DIR/lock/created"; rmdir "$DIR/lock" 2>/dev/null || :' EXIT
         case "${2:-}" in
             start|stop|restart) timeout 180 "$CONTROL" "$2" > "$DIR/output" 2>&1 ;;
             status|test|config) timeout 180 "$PROG" "$2" > "$DIR/output" 2>&1 ;;
@@ -59,8 +59,10 @@ case "${1:-}" in
                     if lock_fresh; then
                         printf '%s\n' '{"accepted":false,"error":"Another operation is running"}'; exit 0
                     fi
+                    rm -f "$DIR/lock/created"
                     rmdir "$DIR/lock" 2>/dev/null && mkdir "$DIR/lock" || exit 1
                 fi
+                date +%s > "$DIR/lock/created"
                 printf '%s\n' "$action" > "$DIR/action"
                 : > "$DIR/output"; : > "$DIR/code"
                 if command -v setsid >/dev/null 2>&1; then
