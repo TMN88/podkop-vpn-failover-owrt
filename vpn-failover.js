@@ -17,7 +17,7 @@ function explain(e) {
     if(s.indexOf('Switching ')===0) return 'Начинаем переход с '+e.from+' на '+e.to+'.';
     if(s.indexOf('Failover completed successfully')===0) return 'Переход завершён: '+e.to+'.';
     if((m=s.match(/^Health-check failed for ([^:]+): (\d+)\/(\d+)/))) return 'Туннель '+m[1]+' не отвечает. Неудачных проверок: '+m[2]+' из '+m[3]+'.';
-    if(s.indexOf('Confirmed unhealthy')===0 || s.indexOf('Confirmed unavailable')===0) return 'Отказ текущего туннеля подтверждён. Начинаем поиск рабочего резерва.';
+    if(s.indexOf('Confirmed VPN failure')===0 || s.indexOf('Confirmed unhealthy')===0 || s.indexOf('Confirmed unavailable')===0) return 'Отказ текущего туннеля подтверждён. Начинаем поиск рабочего резерва.';
     if(s.indexOf('No-reserve retry interval expired')===0) return 'Повторно проверяем резервные туннели после паузы.';
     if((m=s.match(/^Testing failover candidate (.+)$/))) return 'Проверяем резервный туннель '+m[1]+'.';
     if(s.indexOf('Candidate ')===0 && s.indexOf('passed')>=0) return 'Резервный туннель прошёл проверку.';
@@ -28,6 +28,7 @@ function explain(e) {
     if(s.indexOf('Started v')===0) return 'Служба запущена. Проверки выполняются каждые 30 секунд.';
     if(s.indexOf('runtime is not ready')>=0) return 'VPN-движок остановлен или его конфигурация не готова. Ожидаем запуска.';
     if(s.indexOf('connection type is')>=0) return 'Секция сейчас работает без AWG (например, через прокси). Переключение туннелей не выполняется.';
+    if(s.indexOf('No healthy non-quarantined')===0) return 'Свежих рабочих резервов нет. Проверим ранее отказавшие туннели ещё раз.';
     if(s.indexOf('No healthy')===0) return 'Рабочих резервных туннелей пока нет. Повторим проверку позже.';
     if(s.indexOf('recovered')>=0) return 'Связь через текущий туннель восстановилась.';
     if(s.indexOf('externally')>=0 || s.indexOf('outside failover')>=0) return 'Выбор туннеля изменён вне службы. Сохраняем новый выбор.';
