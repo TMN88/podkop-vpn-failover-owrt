@@ -24,9 +24,14 @@ if [ -x "$INIT" ]; then
     "$INIT" disable >/dev/null 2>&1 || true
 fi
 
+if [ -r /usr/lib/podkop-vpn-failover/recovery.sh ] && [ -x "$WORKER" ]; then
+    "$WORKER" cleanup || { printf '[ERROR] Cannot clean owned recovery resources; files retained.\n' >&2; exit 1; }
+fi
 rm -f /www/luci-static/resources/view/vpn-failover.js /usr/libexec/rpcd/vpn-failover /usr/share/luci/menu.d/vpn-failover.json /usr/share/rpcd/acl.d/vpn-failover.json
 # Keep /etc/config/vpn_failover so backend selection survives reinstallation.
 rm -f "$WORKER" "$CONTROL" "$INIT"
+rm -f /usr/lib/podkop-vpn-failover/recovery.sh
+rmdir /usr/lib/podkop-vpn-failover 2>/dev/null || true
 rm -rf "$STATE_DIR" "$LOCK_DIR"
 
 for section in pvf_history pvf_status pvf_test pvf_logs pvf_config pvf_start pvf_restart pvf_stop; do

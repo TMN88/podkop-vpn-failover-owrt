@@ -1,3 +1,11 @@
+# Validation: unreleased 0.3.0-dev
+
+Local recovery development on 2026-11-14: **38 mocked recovery scenarios passed**, plus RPC, actual CLI dispatch, installer state preservation, LuCI and seven shell syntax checks. The original stopped-runtime bug was reproduced offline against the 0.2.1 git object. See [local report](LOCAL-VALIDATION-2026-11-14.md) for evidence and limits, and [recovery/pilot protocol](RECOVERY.md).
+
+**The local validation did not access routers, install the package, or perform physical failure injection.** Publication and GitHub Actions are separate from these local results. Earlier hardware/fleet evidence below applies only to those earlier versions. It does not validate the new recovery code.
+
+---
+
 # Validation of 0.2.0
 
 ## Local checks

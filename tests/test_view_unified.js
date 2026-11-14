@@ -22,8 +22,9 @@ const view=new Function('view','rpc','poll','E','URL','Blob','document','setTime
 function all(node,tag){if(!node||typeof node!=='object')return [];return (node.tag===tag?[node]:[]).concat((Array.isArray(node.children)?node.children:[]).flatMap(c=>all(c,tag)));}
 (async()=>{
     const page=view.render(await view.load());
-    const buttons=all(page,'button');assert.equal(buttons.length,7);
+    const buttons=all(page,'button');assert.equal(buttons.length,11);
     assert.deepEqual(buttons.slice(0,6).map(b=>b.children),['Запустить','Остановить','Перезапустить','Статус','Проверить туннели','Настройки']);
+    assert.deepEqual(buttons.slice(6,10).map(b=>b.children),['Пауза','Продолжить','Восстановить сейчас','Сбросить счётчики']);
     const history=all(page,'details').find(d=>d.attrs.class==='pvf-history');assert(!history.open);
     history.open=true;await tick();assert.equal(history.open,true);
     const technical=all(page,'details').find(d=>d.attrs['data-event-key']);technical.open=true;
@@ -35,7 +36,7 @@ function all(node,tag){if(!node||typeof node!=='object')return [];return (node.t
     job={running:false,action:'start',code:0,output:'started'};await tick();assert(!buttons[0].disabled);
     assert(all(page,'pre').some(n=>n.textContent.includes('started')));
     runError=true;await buttons[4].click();assert(!buttons[4].disabled);assert(all(page,'pre').some(n=>n.textContent.includes('Busy')));
-    await buttons[6].click();assert(downloaded);const diag=JSON.parse(blob.text);assert.equal(diag.format,'vpn-failover-diagnostics-v1');assert.equal(diag.last_command.code,0);
+    await buttons[10].click();assert(downloaded);const diag=JSON.parse(blob.text);assert.equal(diag.format,'vpn-failover-diagnostics-v1');assert.equal(diag.last_command.code,0);
     data={...data,events:[]};await tick();assert(all(page,'td').some(n=>n.children==='Операций пока нет.'));
     readError=true;await tick();assert(all(page,'p').some(n=>n.textContent.includes('Не удалось обновить')));
     console.log('PASS: unified controls, async job, errors, collapsible history, safe text, diagnostics download');

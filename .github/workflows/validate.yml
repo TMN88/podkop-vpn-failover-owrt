@@ -16,6 +16,7 @@ jobs:
       - name: POSIX shell syntax
         run: |
           sh -n podkop-vpn-failover
+          sh -n recovery.sh
           sh -n podkop-vpn-failover-control
           sh -n podkop-vpn-failover.init
           sh -n install.sh
@@ -23,6 +24,8 @@ jobs:
           sh -n vpn-failover.rpc
           python3 tests/test_backend.py
           python3 tests/test_rpc.py
+          python3 tests/test_install.py
+          python3 tests/test_entrypoints.py
           node tests/test_view.js
       - name: Verify package-manager compatibility logic
         run: |

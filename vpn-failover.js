@@ -8,9 +8,14 @@ var jobRPC = rpc.declare({object:'vpn-failover',method:'job',expect:{}});
 var runRPC = rpc.declare({object:'vpn-failover',method:'run',params:['action'],expect:{}});
 var diagnosticsRPC = rpc.declare({object:'vpn-failover',method:'diagnostics',expect:{}});
 var labels = {success:'Успешно',rollback:'Откат выполнен',rollback_failed:'Ошибка отката',notice:'Информация',warning:'Предупреждение',err:'Ошибка'};
+Object.assign(labels,{CURRENT_FAILED:'Туннель не отвечает',RUNTIME_DOWN:'Движок остановлен',CANDIDATE_HEALTHY:'Резерв проверен',SWITCH_APPLIED:'Настройка применена',BACKEND_STARTED:'Обход запущен',SINGBOX_STARTED:'Движок запущен',PATH_VERIFIED:'Маршрут проверен',RECOVERED:'Обход восстановлен',ROLLBACK:'Возврат настройки',NO_HEALTHY_RESERVE:'Нет рабочего резерва',PAUSED:'Пауза',CONFIG_CHANGED_EXTERNALLY:'Настройки изменены вручную',RECOVERY_FAILED:'Не удалось восстановить'});
+var states={PAUSED:'Пауза для обслуживания',OBSERVING:'Наблюдение',PROBING:'Проверяем туннели',APPLYING:'Применяем резерв',STARTING_BACKEND:'Восстанавливаем движок',VERIFYING:'Проверяем обход',RECOVERED:'Обход восстановлен',ROLLING_BACK:'Возвращаем настройку',WAITING_NETWORK:'Проверка сети пока недоступна',NO_HEALTHY_RESERVE:'Рабочих резервов нет',RECOVERY_FAILED:'Восстановление не подтверждено'};
+var reasons={PATH_TEST_UNAVAILABLE:'Движок не предоставляет безопасную проверку маршрута секции',CONFIG_CHANGED_EXTERNALLY:'Настройки изменены вручную',RULESET_FAILURE:'Не удалось загрузить списки правил',DNS_FAILURE:'Не удалось получить независимый ответ DNS',CONFIG_INVALID:'Ошибка конфигурации движка',CONFIG_COMPATIBILITY:'Версии движка и конфигурации несовместимы',NO_HANDSHAKE:'Нет рукопожатия с VPN-сервером',INTERFACE_DOWN:'VPN-интерфейс не работает',HTTPS_FAILURE:'HTTPS через туннель не подтвердился',OTHER_BACKEND_ACTIVE:'Работает другой движок обхода',SECTION_NOT_VPN:'Выбрана секция без VPN',DEADLINE:'Истекло время восстановления',BACKEND_AMBIGUOUS:'Нужно явно выбрать движок обхода'};
 
 function explain(e) {
     var s=e.detail || '', m;
+    var recoveryText={CURRENT_FAILED:'Текущий туннель не прошёл проверку. Ошибка движка учитывается отдельно.',RUNTIME_DOWN:'Туннель работает, но движок или его маршрут не готов. Восстанавливаем обход через тот же туннель.',CANDIDATE_HEALTHY:'Резерв '+e.to+' подтвердил соединение и передачу данных.',SWITCH_APPLIED:'Выбран '+e.to+'. Проверка восстановления ещё продолжается.',BACKEND_STARTED:'Команда запуска или применения выполнена. Проверяем движок и маршрут.',SINGBOX_STARTED:'Движок запущен; это ещё не подтверждение восстановления.',PATH_VERIFIED:'Проверен HTTPS через маршрут выбранной секции.',RECOVERED:'Обход восстановлен через '+e.to+'.',ROLLBACK:'Возвращена настройка прежнего туннеля. Работоспособность проверяется отдельно.',NO_HEALTHY_RESERVE:'Подтверждённого рабочего резерва нет. Повторная попытка после выдержки.',PAUSED:'Автоматические переключения и запуск движка приостановлены.',CONFIG_CHANGED_EXTERNALLY:'Ты изменил настройки во время проверки. Служба сохраняет твой выбор.',RECOVERY_FAILED:'Восстановление не подтверждено. Причина указана в подробностях; логи можно скачать.'};
+    if(recoveryText[e.event])return recoveryText[e.event];
     if(e.event==='success') return 'Переключились на '+e.to+'. Привязка и доступ в интернет проверены.';
     if(e.event==='rollback') return 'Вернулись на '+e.to+': резерв не прошёл проверку.';
     if(e.event==='rollback_failed') return 'Не удалось подтвердить возврат на '+e.to+'. Нужна диагностика.';
@@ -38,7 +43,7 @@ function eventRows(data,expanded) {
     expanded=expanded||new Set();
     return (data.events || []).map(function(e) {
         var key=e.time+'|'+e.event+'|'+e.detail;
-        var color=e.event==='success'?'#23783d':(e.event==='err'||e.event==='rollback_failed'?'#a32626':'#705300');
+        var color=(e.event==='success'||e.event==='RECOVERED')?'#23783d':(e.event==='err'||e.event==='rollback_failed'||e.event==='RECOVERY_FAILED'?'#a32626':'#705300');
         return E('tr',{'class':'tr'},[
             E('td',{'class':'td'},e.time),
             E('td',{'class':'td'},e.from||e.to?(e.from||'—')+' → '+(e.to||'—'):'—'),
@@ -67,15 +72,19 @@ return view.extend({
             state=d;job=j;busy=!!j.running;syncButtons();
             summary.textContent='Версия '+(d.version||'—')+' · Служба: '+(d.running?'работает':'остановлена')+' · Автозапуск: '+(d.enabled?'включён':'выключен')+' · Движок: '+(d.backend||'не определён')+' · Секция: '+d.section+' · Туннель: '+(d.current||'не выбран');
             if(d.error) summary.textContent+=' · '+d.error;
-            else if(!d.runtime) summary.textContent+=' · Ожидаем готовности VPN-движка';
+            else if(d.paused) summary.textContent+=' · Пауза: движок не запускаем';
+            else if(!d.runtime) summary.textContent+=' · Движок остановлен; активная служба попробует восстановить обход';
             else if(!d.current) summary.textContent+=' · Ожидаем VPN-режима секции';
+            summary.textContent+=' · '+(states[d.state]||'Восстановление ещё не подтверждено')+(d.reason?' · '+(reasons[d.reason]||'Причина указана в технических подробностях'):'');
+            summary.textContent+=' · Обход: '+(d.ready?'подтверждён':'пока не подтверждён');
+            if(d.operation_id&&d.probing)summary.textContent+=' · Проверяем: '+d.probing;
             var expanded=new Set();
             if(body.querySelectorAll) Array.from(body.querySelectorAll('details[open]')).forEach(function(n){expanded.add(n.getAttribute('data-event-key'));});
             var rows=eventRows(d,expanded),next=E('tbody',{},rows.length?rows:[E('tr',{},[E('td',{'colspan':'4'},'Операций пока нет.')])]);
             table.replaceChild(next,body);body=next;
             count.textContent='Журнал операций ('+(d.events||[]).length+') — развернуть / свернуть';
             updated.textContent='Обновлено: '+new Date().toLocaleTimeString();
-            if(j.action) result.textContent=(j.running?'Выполняется: ':j.code===0?'Готово: ':'Команда завершилась с ошибкой: ')+({start:'запуск службы',stop:'остановка службы',restart:'перезапуск службы',status:'проверка состояния',test:'проверка туннелей',config:'текущие настройки'}[j.action]||j.action)+'\n'+(j.output||'');
+            if(j.action) result.textContent=(j.running?'Выполняется: ':j.code===0?'Готово: ':'Команда завершилась с ошибкой: ')+({start:'запуск службы',stop:'остановка службы',restart:'перезапуск службы',status:'проверка состояния',test:'проверка туннелей',config:'текущие настройки',pause:'пауза',resume:'продолжение наблюдения',recover:'проверка и восстановление',reset:'сброс счётчиков'}[j.action]||j.action)+'\n'+(j.output||'');
         }
         function pollOnce(){return Promise.all([statusRPC(),jobRPC()]).then(function(d){refresh(d[0],d[1]);});}
         function action(name){
@@ -87,7 +96,8 @@ return view.extend({
         function button(label,name,style){var b=E('button',{'class':'cbi-button '+(style||''),'click':function(){return action(name);}},label);buttons.push(b);return b;}
         var controls=E('div',{'class':'pvf-controls','style':'display:flex;gap:8px;flex-wrap:wrap;margin:16px 0'},[
             button('Запустить','start','cbi-button-apply'),button('Остановить','stop','cbi-button-negative'),
-            button('Перезапустить','restart'),button('Статус','status'),button('Проверить туннели','test'),button('Настройки','config')]);
+            button('Перезапустить','restart'),button('Статус','status'),button('Проверить туннели','test'),button('Настройки','config'),
+            button('Пауза','pause'),button('Продолжить','resume'),button('Восстановить сейчас','recover'),button('Сбросить счётчики','reset')]);
         var download=E('button',{'class':'cbi-button cbi-button-action','click':function(){
             download.disabled=true;
             return diagnosticsRPC().then(function(d){
@@ -101,7 +111,7 @@ return view.extend({
         refresh(state,job);
         poll.add(function(){return pollOnce().catch(function(){updated.textContent='Не удалось обновить данные. Показаны последние полученные сведения.';});},5);
         return E('div',{},[E('h2',{},'VPN Failover'),summary,controls,
-            E('p',{'class':'description'},'«Запустить» также включает автозапуск. «Остановить» отключает его. Проверка туннелей не меняет выбранный VPN. Настройки показывают текущие параметры службы.'),
+            E('p',{'class':'description'},'Перед обслуживанием поставь Failover на паузу или останови его службу, затем останавливай VPN-движок. Без паузы активная служба восстанавливает остановленный движок. «Продолжить» снимает паузу; «Запустить» включает автозапуск Failover, «Остановить» отключает его. Открытие страницы ничего не запускает.'),
             updated,resultBox,E('div',{'style':'margin:16px 0'},[download,E('p',{'class':'description'},'Диагностический JSON для разбора проблемы: состояние службы, настройки и исходные технические сообщения. Без VPN-ключей и полных конфигураций.')]),history]);
     },
     handleSave:null,handleSaveApply:null,handleReset:null

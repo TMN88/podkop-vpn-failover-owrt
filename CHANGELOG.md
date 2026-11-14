@@ -1,3 +1,14 @@
+## 0.3.0-dev (unreleased)
+
+- Independent AWG checks continue while sing-box is stopped; recover a healthy current tunnel before replacing it.
+- Explicit Podkop, Forkop (including owned interface children) and Forkozz/NetShift adapters, live backend detection and per-section reserve allowlist.
+- Persistent maintenance pause, read-only status/dashboard, separate failure counters and monotonic cooldown/hold.
+- Common operation lock, bounded child process groups, exact private routing cleanup and crash recovery manifests.
+- Native backend generation/start, checked fallback engine start, live PID/config, stable runtime and fresh-fatal checks, section binding/policy/actual-engine HTTPS verification.
+- Guarded field-only rollback; manual configuration changes abort writes. Never claim success from UCI/binding/AWG alone.
+- LuCI pause/recovery controls, readable states and downloadable bounded diagnostics.
+- Installer backup, numeric setting migration and preservation of stopped/running and boot states. No router deployment or hardware acceptance for this version yet.
+
 ## 0.2.1 (2026-11-07)
 
 - Unified Services / VPN Failover page: service status, start/stop/restart, tunnel tests and current settings.

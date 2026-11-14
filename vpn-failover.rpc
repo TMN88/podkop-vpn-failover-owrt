@@ -38,20 +38,14 @@ run_bounded() {
 
 lock_fresh() {
     [ -d "$DIR/lock" ] || return 1
-    now="$(date +%s)"
+    now="$(cut -d. -f1 /proc/uptime)"
     stamp="$(cat "$DIR/lock/created" 2>/dev/null)"
     case "$stamp" in ''|*[!0-9]*) return 0 ;; esac
     [ "$((now - stamp))" -lt 240 ]
 }
 
 snapshot() {
-    running=false; enabled=false; runtime=false
-    "$INIT" running >/dev/null 2>&1 && running=true
-    "$INIT" enabled >/dev/null 2>&1 && enabled=true
-    /etc/init.d/sing-box running >/dev/null 2>&1 && runtime=true
-    "$PROG" dashboard | jq --arg version "$("$PROG" version)" \
-        --argjson running "$running" --argjson enabled "$enabled" --argjson runtime "$runtime" \
-        '. + {version:$version,running:$running,enabled:$enabled,runtime:$runtime}'
+    "$PROG" dashboard | jq --arg version "$("$PROG" version)" '. + {version:$version}'
 }
 job() {
     running=false; lock_fresh && running=true
@@ -68,7 +62,7 @@ case "${1:-}" in
         trap 'rm -f "$DIR/lock/created"; rmdir "$DIR/lock" 2>/dev/null || :' EXIT
         case "${2:-}" in
             start|stop|restart) run_bounded "$CONTROL" "$2" ;;
-            status|test|config) run_bounded "$PROG" "$2" ;;
+            status|test|config|pause|resume|recover|reset) run_bounded "$PROG" "$2" ;;
             *) exit 1 ;;
         esac
         printf '%s\n' "$?" > "$DIR/code"
@@ -84,7 +78,7 @@ case "${1:-}" in
                 ;;
             run)
                 action="$(cat | jq -er '.action | select(type == "string")')" || exit 1
-                case "$action" in start|stop|restart|status|test|config) ;; *) printf '%s\n' '{"accepted":false,"error":"Unknown action"}'; exit 0 ;; esac
+                case "$action" in start|stop|restart|status|test|config|pause|resume|recover|reset) ;; *) printf '%s\n' '{"accepted":false,"error":"Unknown action"}'; exit 0 ;; esac
                 mkdir -p "$DIR"
                 if ! mkdir "$DIR/lock" 2>/dev/null; then
                     if lock_fresh; then
@@ -93,7 +87,7 @@ case "${1:-}" in
                     rm -f "$DIR/lock/created"
                     rmdir "$DIR/lock" 2>/dev/null && mkdir "$DIR/lock" || exit 1
                 fi
-                date +%s > "$DIR/lock/created"
+                cut -d. -f1 /proc/uptime > "$DIR/lock/created"
                 printf '%s\n' "$action" > "$DIR/action"
                 : > "$DIR/output"; : > "$DIR/code"
                 if command -v setsid >/dev/null 2>&1; then

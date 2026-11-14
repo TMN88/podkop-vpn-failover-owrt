@@ -1,9 +1,11 @@
-# VPN Failover for Podkop and Forkozz
+# VPN Failover recovery development
 
-Version 0.2.1 adds a unified LuCI Services → VPN Failover page: service status, start/stop/restart, live status, tunnel checks, current settings, collapsible operation history with Russian explanations, and downloadable diagnostic JSON.
+Unreleased **0.3.0-dev** adds independent AWG probing and bounded runtime recovery for Podkop, Forkop and Forkozz/NetShift. Version 0.2.1 does not contain this fix.
 
-Commands run asynchronously with a fixed action whitelist, a single-job lock and a 180-second execution limit. Management uses the write ACL; status/job/diagnostics use read ACL. The UI displays command output and preserves the expanded history/details during automatic refresh. Download contains original events, service state, failover parameters and last command output; it does not read VPN credentials or full router configurations.
+Pause Failover before stopping the routing backend for maintenance. `pause` persists; `resume` only clears it. Active, unpaused Failover can start a stopped backend/sing-box, without changing their boot enablement. `status`/`dashboard` and opening LuCI are read-only and never probe the network.
 
-Start also enables autostart; stop disables it; restart preserves its enabled state. Tunnel checks do not switch routing. Installation/update preserves the existing service and configuration state.
+Configure an explicit per-section `vpn_failover.main.interfaces` allowlist. Missing allowlist permits same-tunnel engine recovery only. Auto detection uses live service/nft evidence; ambiguous or unsupported configurations fail closed. Arbitrary AWG names are supported. Other sections, AWG profiles, DNS, Tailscale and SSH are preserved.
 
-See [Russian instructions](README.md) and [validation](VALIDATION.md). AmneziaWG `awg*` interfaces, one named Podkop or Forkozz/NetShift VPN section, OpenWrt 24.10/opkg and 25.12/apk are supported. History holds 200 operations in RAM and is cleared on reboot. Original authors and MIT license are preserved.
+Recovery verifies the actual running engine's named section path using an existing exclusively bound loopback mixed inbound or its existing local Clash API. No test ports are opened. Unsupported path verification reports `PATH_TEST_UNAVAILABLE`, never success. Native backend generation must precede any fallback engine start. The OpenWrt sing-box init contract is checked before fallback.
+
+Installer preserves existing configuration, daemon running state and enablement. This development code is published in the repository; no tagged release or router deployment has been performed. Local mocked tests are separate from hardware acceptance. See [Russian instructions](README.md), [recovery contract and pilot protocol](RECOVERY.md), and [validation](VALIDATION.md).

@@ -13,13 +13,17 @@ start_service() {
     # The daemon may be sleeping for CHECK_INTERVAL=30s when SIGTERM arrives.
     # Give the shell enough time to leave sleep, run its trap and remove the lock.
     procd_set_param term_timeout 45
-    # The worker writes structured events through logger(1). Do not also
-    # redirect its diagnostic stderr/stdout into logd, otherwise each event
-    # is duplicated and stderr copies are incorrectly tagged as daemon.err.
+    # Operation events are kept in the bounded private recovery journal.
+    # Backend/sing-box keep their own native procd/logd logging.
     procd_close_instance
 }
 
 reload_service() {
     stop
     start
+}
+
+stop_service() {
+    # Cancel explicit UI/CLI recovery as well as the supervised daemon.
+    "$PROG" cancel >/dev/null 2>&1 || :
 }
