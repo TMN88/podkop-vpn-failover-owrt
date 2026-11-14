@@ -8,7 +8,10 @@ ROOT = Path(__file__).resolve().parents[1]
 out = ROOT / 'test-output' / ('entrypoints-' + str(os.getpid()))
 out.mkdir(parents=True, exist_ok=True)
 source = (ROOT / 'podkop-vpn-failover').read_text(encoding='utf-8')
-jq = os.environ.get('TEST_JQ', 'jq').replace('\\', '/')
+jq = os.environ.get('TEST_JQ') or shutil.which('jq')
+if not jq:
+    raise SystemExit('Install jq or set TEST_JQ to its executable path')
+jq = jq.replace('\\', '/')
 fixture = out / 'worker.sh'
 fixture.write_text(f'''uci() {{ return 1; }}
 nft() {{ return 1; }}

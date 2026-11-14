@@ -14,7 +14,10 @@ OUT.mkdir(parents=True, exist_ok=True)
 busybox = os.environ.get('TEST_BUSYBOX')
 shell = os.environ.get('TEST_SHELL') or shutil.which('sh')
 argv = [busybox, 'sh'] if busybox else [shell]
-jq = os.environ.get('TEST_JQ', 'jq').replace('\\', '/')
+jq = os.environ.get('TEST_JQ') or shutil.which('jq')
+if not jq:
+    raise SystemExit('Install jq or set TEST_JQ to its executable path')
+jq = jq.replace('\\', '/')
 header = (ROOT / 'podkop-vpn-failover').read_text(encoding='utf-8').split('RECOVERY_LIB=')[0]
 lib = (ROOT / 'recovery.sh').read_text(encoding='utf-8').removesuffix('load_settings\n')
 setup = r'''
