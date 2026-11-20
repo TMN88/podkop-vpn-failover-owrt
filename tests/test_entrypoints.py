@@ -1,3 +1,4 @@
+import time
 """Smoke-test the actual CLI dispatch with no services or network available."""
 import json
 import os
@@ -5,7 +6,7 @@ from pathlib import Path
 import shutil
 import subprocess
 ROOT = Path(__file__).resolve().parents[1]
-out = ROOT / 'test-output' / ('entrypoints-' + str(os.getpid()))
+out = ROOT / 'test-output' / ('entrypoints-' + str(os.getpid()) + '-' + str(time.time_ns()))
 out.mkdir(parents=True, exist_ok=True)
 source = (ROOT / 'podkop-vpn-failover').read_text(encoding='utf-8')
 jq = os.environ.get('TEST_JQ') or shutil.which('jq')
@@ -28,7 +29,7 @@ for command in ('version', 'config', 'status', 'dashboard'):
     assert p.returncode == 0, (command, p.stderr)
     assert b'forbidden_network_probe' not in p.stderr
     if command == 'version':
-        assert p.stdout.strip() == b'0.3.0-dev.2', p.stdout
+        assert p.stdout.strip() == b'0.3.0-dev.3', p.stdout
     if command == 'status':
         prefix='[Обход не определён]'.encode('utf-8')
         if os.name=='nt' and bb:

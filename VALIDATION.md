@@ -1,4 +1,21 @@
-# Forkozz review and update version — 2026-11-20
+# OpenWrt 25.12.5 / Forkozz stand — 2026-11-20
+
+Installed **0.3.0-dev.3** on one authorized Cudy WBR3000UAX v1 stand (kernel 6.12.94, NetShift 0.9.12, sing-box 1.14.3-extended-2.7.3-lite). Only the component files were installed; no package-manager update, firmware or Tailscale action was performed. Backups and private diagnostics remain outside this public repository.
+
+- Three existing AWG interfaces passed independent pinned HTTPS, handshake and receive-counter checks.
+- Stopped NetShift and sing-box using the native init command. Failover recovered the same selected interface, confirmed a stable live engine and actual named outbound HTTPS, and reported RECOVERED / ready=true.
+- Injected failed HTTPS probe results for the current interface through a private process-local curl wrapper. Three normal failure counts caused a real NetShift interface change to a healthy reserve and actual-engine HTTPS verification. This was synthetic probe failure, not physical tunnel disconnection.
+- A different reserve passed independent AWG checks but failed actual-engine HTTPS. Failover rejected success, restored the original interface and verified its path. The reserve path failure remains unexplained; it is not claimed as working through NetShift.
+- Restored the original interface and full reserve allowlist. Final Failover daemon is running, enabled and unpaused; engine/path verified. NetShift and sing-box boot enablement stayed unchanged. Protected network, DHCP, firewall, system and SSH configuration hashes match. No temporary probe policy rules remain.
+- Authenticated LuCI showed Forkozz identity, version, actual last-check time and a working expandable operation journal with readable transitions. Diagnostic-download control was exercised; filesystem completion is not asserted.
+
+Local checks passed: **48 backend/recovery scenarios**, RPC, installer state, CLI, UI, seven syntax checks and baseline reproduction. Report: `test-output/validation-20261120T161422Z/results.json`. GitHub Actions is verified after publication.
+
+Limits: no router reboot, physical AWG outage or LAN application/playback test; no fleet rollout or physical Podkop/Forkop acceptance. Initial stand failures exposed missing stat, route preflight return, named protocol cleanup, NetShift lifecycle-flag mutation and truncated log coverage; these were fixed and retested before final acceptance.
+
+---
+
+# Forkozz review and update version вЂ” 2026-11-20
 
 Update version: **0.3.0-dev.2**. Rechecked Forkozz selection despite stale Podkop config, the `netshift.<section>.interface` field, and native NetShift reload/start commands. Fixed waiting for asynchronous one-shot generation after procd init start, before runtime binding checks or fallback engine start. Added bounded generation/completion tests and a procd filter that excludes completed jobs and unrelated watchers.
 
@@ -6,7 +23,7 @@ Local verification passed: **44 backend/recovery scenarios**, RPC, installer-sta
 
 ---
 
-# Bypass identity and last-check UI — 2026-11-20
+# Bypass identity and last-check UI вЂ” 2026-11-20
 
 Added a dedicated current-bypass panel, native activity/engine/path status, real active-tunnel probe time/result, backend context on history rows and command output, and a human-readable CLI status. Dashboard remains JSON. Failed/stale/manual probes cannot retain a false green result; a verified reserve switch promotes the original probe timestamp without inventing a check time. Historical jobs/events keep their own backend identity.
 

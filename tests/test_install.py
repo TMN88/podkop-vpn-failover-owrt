@@ -1,3 +1,4 @@
+import time
 """Exercise the installer's actual service-state restoration branch locally."""
 import os
 from pathlib import Path
@@ -8,7 +9,7 @@ source = (ROOT / 'install.sh').read_text(encoding='utf-8')
 # The final printing branch is later than the restoration branch.
 start = source.index('if [ "$existing_install" -eq 1 ]; then\n    if [ "$was_enabled"')
 branch = source[start:source.index('\nrm -f "$TMP_WORKER"', start)]
-out = ROOT / 'test-output' / ('install-' + str(os.getpid()))
+out = ROOT / 'test-output' / ('install-' + str(os.getpid()) + '-' + str(time.time_ns()))
 out.mkdir(parents=True, exist_ok=True)
 busybox = os.environ.get('TEST_BUSYBOX')
 argv = [busybox, 'sh'] if busybox else [os.environ.get('TEST_SHELL') or shutil.which('sh')]

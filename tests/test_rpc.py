@@ -1,3 +1,4 @@
+import time
 """Validate the real RPC schema and rejection of arbitrary command input."""
 from pathlib import Path
 import os,shutil,subprocess,json
@@ -7,7 +8,7 @@ shell=os.environ.get('TEST_SHELL') or shutil.which('sh')
 source=(root/'vpn-failover.rpc').read_text(encoding='utf-8')
 if os.environ.get('TEST_JQ'):
     source=source.replace('jq ', '"'+os.environ['TEST_JQ'].replace('\\','/')+'" ')
-out=root/'test-output'/('rpc-'+str(os.getpid()));out.mkdir(parents=True,exist_ok=True)
+out=root/'test-output'/('rpc-'+str(os.getpid())+'-'+str(time.time_ns()));out.mkdir(parents=True,exist_ok=True)
 os.environ['TEST_RPC_DIR']=str(out/'state').replace('\\','/')
 source=source.replace('DIR=/tmp/podkop-vpn-failover-ui','DIR="$TEST_RPC_DIR"')
 fixture=out/'rpc.sh';fixture.write_text(source,encoding='utf-8',newline='\n')

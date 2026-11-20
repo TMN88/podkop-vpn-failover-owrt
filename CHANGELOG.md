@@ -1,3 +1,13 @@
+## 0.3.0-dev.3 (2026-11-20)
+
+- Support stock OpenWrt without stat while preserving private-directory ownership checks.
+- Return success after a valid endpoint-route preflight; clean owned routing resources with numeric protocol output.
+- Verify the existing Clash API bound to a router-assigned IPv4 address, without creating listeners.
+- Exclude only NetShift settings.shutdown_correctly from the user-configuration guard: native start/stop owns this lifecycle flag.
+- Read the complete system log ring during native generation; distinguish lost log coverage from a fresh engine fatal error.
+- Pass 48 local backend/recovery scenarios and the RPC, installer, CLI, UI, syntax and baseline checks.
+- Validate one OpenWrt 25.12.5 / Forkozz 0.9.12 stand: stopped-engine recovery, reserve transition and rollback. See VALIDATION.md for injection method and limits.
+
 ## 0.3.0-dev.2 (2026-11-20)
 
 - Wait for asynchronous Podkop/NetShift procd generation to finish and for the selected binding before engine checks or fallback start.

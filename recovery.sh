@@ -25,7 +25,14 @@ identity() { awk '{print $22}' "/proc/$1/stat" 2>/dev/null; }
 valid_name() { case "$1" in ''|*[!a-zA-Z0-9_]*) return 1;; esac; }
 valid_device() { case "$1" in ''|*[!a-zA-Z0-9_.-]*) return 1;; esac; [ "${#1}" -le 15 ]; }
 trusted_directory() {
-    [ ! -L "$1" ] && [ -d "$1" ] && [ "$(stat -c '%u:%a' "$1" 2>/dev/null)" = 0:700 ]
+    [ ! -L "$1" ] && [ -d "$1" ] || return 1
+    if command -v stat >/dev/null 2>&1; then
+        [ "$(stat -c '%u:%a' "$1" 2>/dev/null)" = 0:700 ]
+    else
+        # Stock OpenWrt BusyBox may omit stat. Numeric ls is sufficient for
+        # this exact root-owned 0700 directory contract; never accept a link.
+        ls -nd "$1" 2>/dev/null | awk '$1=="drwx------" && $3==0 {ok=1} END {exit !ok}'
+    fi
 }
 number() { case "$1" in ''|*[!0-9]*) return 1;; esac; }
 setting() { uci -q get "vpn_failover.main.$1" 2>/dev/null; }
@@ -201,9 +208,20 @@ allowed_interface() { discover_interfaces | grep -Fxq "$1"; }
 # Fingerprint both packages including outstanding UCI deltas. Only the hash,
 # never config values/keys/subscriptions, may leave the private operation.
 config_fingerprint() {
-    { uci -q export "$CONFIG_PACKAGE"; uci -q changes "$CONFIG_PACKAGE";
+    { backend_config_fingerprint_data
       uci -q export vpn_failover; uci -q changes vpn_failover;
       uci -q export network; uci -q changes network; } 2>/dev/null | sha256sum | cut -d' ' -f1
+}
+backend_config_fingerprint_data() {
+    if [ "$BACKEND" = forkozz ]; then
+        # NetShift start/stop owns this crash-recovery flag (1 -> 0 on start).
+        # It is lifecycle state, not a user routing/DNS/subscription change.
+        # Keep EVERY other field and pending delta in the concurrency guard.
+        uci -q export netshift | awk '$1=="config" {s=($3=="\047settings\047")} !(s && $1=="option" && $2=="shutdown_correctly")'
+        uci -q changes netshift | sed '/^netshift\.settings\.shutdown_correctly=/d'
+    else
+        uci -q export "$CONFIG_PACKAGE"; uci -q changes "$CONFIG_PACKAGE"
+    fi
 }
 config_unchanged() {
     [ "$(cat "$STATE_DIR/cancel-generation" 2>/dev/null)" = "${CANCEL_TOKEN:-}" ] || { REASON=OPERATION_CANCELLED; return 1; }
@@ -367,11 +385,11 @@ cleanup_routes() {
     valid_device "$dev" || return 1
     # Delete exact owned selectors/routes, never flush a table. Protocol marks
     # distinguish our resources from a foreign replacement after a crash.
-    rules="$(ip -4 rule show)" || return 1
+    rules="$(ip -N -4 rule show)" || return 1
     if printf '%s\n' "$rules" | grep -Eq "^$pref:.*oif $dev .*lookup $table .*proto(col)? (186|0xba)"; then
         ip -4 rule del pref "$pref" oif "$dev" lookup "$table" protocol 186 || return 1
     fi
-    routes="$(ip -4 route show table "$table")" || return 1
+    routes="$(ip -N -4 route show table "$table")" || return 1
     if printf '%s\n' "$routes" | grep -Eq "^default dev $dev .*proto (186|0xba)"; then
         ip -4 route del table "$table" default dev "$dev" proto 186 || return 1
     fi
@@ -402,6 +420,7 @@ interface_state() {
     esac
     [ -n "$route" ] || { PROBE_CODE=WAITING_NETWORK; return 2; }
     printf '%s\n' "$route" | grep -Eq "dev $DEVICE([[:space:]]|$)" && { PROBE_CODE=ENDPOINT_ROUTE_LOOP; return 2; }
+    return 0
 }
 awg_rx() { awg show "$DEVICE" transfer 2>/dev/null | awk '{s+=$2} END {printf "%.0f\n",s}'; }
 awg_handshake() { awg show "$DEVICE" latest-handshakes 2>/dev/null | awk '$2 > 0 {ok=1} END {exit !ok}'; }
@@ -643,7 +662,7 @@ ensure_started() {
         [ "$(runtime_pid)" = "$pid" ] && [ "$(identity "$pid")" = "$first_id" ] || { REASON=RUNTIME_CRASH; return 1; }
         sleep 1; n=$((n + 1))
     done
-    runtime_no_fatal || { REASON=RUNTIME_FATAL; return 1; }
+    runtime_no_fatal || return 1
 }
 engine_start() {
     # OpenWrt packages' sing-box.init reads only main.conffile/main.enabled.
@@ -653,18 +672,24 @@ engine_start() {
     bounded 10 "$SING_BOX_INIT" start
 }
 runtime_log_cursor() {
-    logread -l 200 > "$OP_LOCK/logs.before" 2>/dev/null || return 1
+    logread > "$OP_LOCK/logs.before" 2>/dev/null || return 1
     tail -n1 "$OP_LOCK/logs.before" > "$OP_LOCK/log.cursor"
 }
 runtime_no_fatal() {
     local cursor
     cursor="$(cat "$OP_LOCK/log.cursor")"
-    logread -l 200 > "$OP_LOCK/logs.after" 2>/dev/null || return 1
+    # Native generation can emit more than 200 lines. Use the complete bounded
+    # system ring; if its cursor really rotated out, fail closed as unavailable.
+    REASON=RUNTIME_LOG_UNAVAILABLE
+    logread > "$OP_LOCK/logs.after" 2>/dev/null || return 1
     if [ -n "$cursor" ]; then
         grep -Fxq "$cursor" "$OP_LOCK/logs.after" || return 1
         awk -v cursor="$cursor" '$0==cursor {seen=1; next} seen {print}' "$OP_LOCK/logs.after" > "$OP_LOCK/logs.new"
     else cp "$OP_LOCK/logs.after" "$OP_LOCK/logs.new"; fi
-    ! grep -Eiq '(sing-box|sing_box).*(FATAL|panic|crash)|procd.*sing-box.*(crash|exit)' "$OP_LOCK/logs.new"
+    if grep -Eiq '(sing-box|sing_box).*(FATAL|panic|crash)|procd.*sing-box.*(crash|exit)' "$OP_LOCK/logs.new"; then
+        REASON=RUNTIME_FATAL; return 1
+    fi
+    REASON=""; return 0
 }
 diagnose_backend() {
     # Raw output remains private and is discarded. Only category is recorded.
@@ -705,6 +730,13 @@ verify_path() {
     case "$api" in
         127.0.0.1:*) port="${api#*:}";;
         0.0.0.0:*) port="${api#*:}"; api="127.0.0.1:$port";;
+        *:*)
+            host="${api%:*}"; port="${api##*:}"
+            # Existing API may bind the router's LAN address, not loopback.
+            # Accept only a literal address actually assigned to THIS router.
+            # No new listener or network access permission is created.
+            printf '%s\n' "$host" | awk -F. 'NF!=4 {exit 1} {for(i=1;i<=4;i++)if($i!~/^[0-9]+$/||$i>255)exit 1}' || { REASON=PATH_TEST_UNAVAILABLE; return 2; }
+            ip -4 -o addr show | awk -v h="$host" '{split($4,a,"/");if(a[1]==h)ok=1} END{exit !ok}' || { REASON=PATH_TEST_UNAVAILABLE; return 2; };;
         *) REASON=PATH_TEST_UNAVAILABLE; return 2;;
     esac
     number "$port" && [ "$port" -gt 0 ] && [ "$port" -le 65535 ] || { REASON=PATH_TEST_UNAVAILABLE; return 2; }

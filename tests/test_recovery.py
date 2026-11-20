@@ -1,3 +1,4 @@
+import time
 """Execute the production ash functions against deterministic local fixtures.
 
 No router, administrator access, external DNS, or network access is used.
@@ -9,7 +10,7 @@ import subprocess
 import re
 
 ROOT = Path(__file__).resolve().parents[1]
-OUT = ROOT / 'test-output' / ('recovery-' + str(os.getpid()))
+OUT = ROOT / 'test-output' / ('recovery-' + str(os.getpid()) + '-' + str(time.time_ns()))
 OUT.mkdir(parents=True, exist_ok=True)
 busybox = os.environ.get('TEST_BUSYBOX')
 shell = os.environ.get('TEST_SHELL') or shutil.which('sh')
@@ -269,6 +270,45 @@ def production(*names):
     return '\n'.join(pieces)
 
 LOW_LEVEL = {
+    'netshift_lifecycle_flag_is_not_a_manual_config_change': production('config_fingerprint') + r'''
+BACKEND=forkozz; CONFIG_PACKAGE=netshift; lifecycle=1; user_iface=DE_custom; pending=0
+uci() {
+    [ "$1" != -q ] || shift
+    case "$1:$2" in
+        export:netshift) printf "config settings 'settings'\n option shutdown_correctly '%s'\n option dns_server 'unchanged'\nconfig section 'main'\n option interface '%s'\n" "$lifecycle" "$user_iface";;
+        changes:netshift) [ "$pending" = 0 ] || echo "netshift.settings.shutdown_correctly='$lifecycle'";;
+        export:*) echo stable;;
+        *) return 0;;
+    esac
+}
+before="$(config_fingerprint)"
+lifecycle=0; pending=1
+eq "$(config_fingerprint)" "$before" ignore_only_native_crash_flag
+user_iface=SE_vpn
+[ "$(config_fingerprint)" != "$before" ] || die missed_manual_selection
+''',
+    'interface_preflight_accepts_valid_route_and_rejects_endpoint_loop': production('interface_state') + r'''
+CURRENT=DE_custom
+ubus() { echo '{"up":true,"l3_device":"DE_custom"}'; }
+awg() { echo 'fixture-public-peer 203.0.113.7:443'; }
+ip() { echo '203.0.113.7 via 192.168.7.254 dev wan'; }
+interface_state DE_custom || die valid_preflight_returned_failure
+eq "$DEVICE" DE_custom
+ip() { echo '203.0.113.7 dev DE_custom'; }
+interface_state DE_custom; rc=$?
+eq "$rc" 2
+eq "$PROBE_CODE" ENDPOINT_ROUTE_LOOP
+''',
+    'trusted_directory_works_without_optional_stat_applet': production('trusted_directory') + r'''
+command() { return 1; }
+ls() { printf '%s\n' "$listing"; }
+listing='drwx------ 1 0 0 80 Nov 20 10:00 /tmp/private'
+trusted_directory "$STATE_DIR" || die root_private_ls
+listing='drwxrwxrwx 1 0 0 80 Nov 20 10:00 /tmp/private'
+if trusted_directory "$STATE_DIR"; then die world_writable; fi
+listing='drwx------ 1 1000 0 80 Nov 20 10:00 /tmp/private'
+if trusted_directory "$STATE_DIR"; then die foreign_owner; fi
+''',
     'netshift_procd_generation_filter_distinguishes_missing_completed_and_watcher': production('backend_applying') + r'''
 backend_choice=forkozz; select_backend || die select
 phase=missing
@@ -445,14 +485,28 @@ eq "$rc" 2 synthetic_api_rejected
 eq "$REASON" PATH_TEST_INVALID
 release_operation
 ''',
+    'actual_engine_api_accepts_only_router_owned_lan_address': production('verify_path', 'verify_podkop_binding', 'outbound_tag') + r'''
+acquire_operation || die lock
+SING_BOX_CONFIG="$STATE_DIR/runtime.json"
+echo '{"outbounds":[{"tag":"main-out","type":"direct","bind_interface":"DE_custom"}],"experimental":{"clash_api":{"external_controller":"192.168.7.1:9090"}}}' > "$SING_BOX_CONFIG"
+nft() { echo 'tproxy to :1602'; }
+ip() { case "$*" in *'addr show'*) echo '1: br-lan inet 192.168.7.1/24 scope global br-lan';; *'route show'*) echo 'local default dev lo';; *) echo '100: from all fwmark 0x10000 lookup podkop';; esac; }
+probe_curl() { case "$*" in *vpn-failover.invalid*) return 22;; *) echo '{"delay":42}';; esac; }
+verify_path DE_custom || die local_api
+ip() { case "$*" in *'addr show'*) echo '1: br-lan inet 192.168.8.1/24 scope global br-lan';; *'route show'*) echo 'local default dev lo';; *) echo '100: from all fwmark 0x10000 lookup podkop';; esac; }
+verify_path DE_custom; rc=$?
+eq "$rc" 2 reject_foreign_api
+eq "$REASON" PATH_TEST_UNAVAILABLE
+release_operation
+''',
     'route_collision_and_crash_cleanup_never_flush_foreign': production('prepare_routes', 'cleanup_routes') + r'''
 acquire_operation || die lock
 ip() {
     echo "$*" >> "$STATE_DIR/ip-commands"
     case "$*" in
-        '-4 rule show') echo '0: from all lookup local'; [ ! -f "$STATE_DIR/own-rule" ] || cat "$STATE_DIR/own-rule";;
-        '-4 route show table 42800') echo 'default dev FOREIGN proto static';;
-        '-4 route show table 42801') [ ! -f "$STATE_DIR/own-route" ] || cat "$STATE_DIR/own-route";;
+        '-4 rule show'|'-N -4 rule show') echo '0: from all lookup local'; [ ! -f "$STATE_DIR/own-rule" ] || cat "$STATE_DIR/own-rule";;
+        '-4 route show table 42800'|'-N -4 route show table 42800') echo 'default dev FOREIGN proto static';;
+        '-4 route show table 42801'|'-N -4 route show table 42801') [ ! -f "$STATE_DIR/own-route" ] || cat "$STATE_DIR/own-route";;
         '-4 route add table 42801 default dev NL-dev proto 186') echo 'default dev NL-dev proto 186 scope link' > "$STATE_DIR/own-route";;
         '-4 rule add pref 2 oif NL-dev lookup 42801 protocol 186') echo '2: from all oif NL-dev lookup 42801 proto 186' > "$STATE_DIR/own-rule";;
         '-4 route del table 42801 default dev NL-dev proto 186') rm -f "$STATE_DIR/own-route";;
@@ -486,11 +540,17 @@ release_operation
     'new_fatal_rejects_stable_pid_and_old_fatal_ignored': production('runtime_log_cursor', 'runtime_no_fatal') + r'''
 acquire_operation || die lock
 printf '%s\n' 'old daemon.err sing-box[1]: FATAL old failure' 'old marker' > "$STATE_DIR/system-log"
-logread() { cat "$STATE_DIR/system-log"; }
+logread() { if [ "$#" -gt 0 ]; then tail -n 200 "$STATE_DIR/system-log"; else cat "$STATE_DIR/system-log"; fi; }
 runtime_log_cursor || die cursor
 runtime_no_fatal || die old_fatal
+for n in $(seq 1 250); do echo "generation progress $n"; done >> "$STATE_DIR/system-log"
+runtime_no_fatal || die busy_generation_lost_cursor
 echo 'new daemon.err sing-box[2]: FATAL downloading rule-set' >> "$STATE_DIR/system-log"
 if runtime_no_fatal; then die fresh_fatal_ignored; fi
+eq "$REASON" RUNTIME_FATAL
+echo rotated > "$STATE_DIR/system-log"
+if runtime_no_fatal; then die missing_cursor_accepted; fi
+eq "$REASON" RUNTIME_LOG_UNAVAILABLE
 release_operation
 ''',
     'dns_bootstrap_reserve_seeds_cache_before_counting_failure': r'''
