@@ -29,7 +29,14 @@ for command in ('version', 'config', 'status', 'dashboard'):
     assert b'forbidden_network_probe' not in p.stderr
     if command == 'version':
         assert p.stdout.strip() == b'0.3.0-dev', p.stdout
-    if command in ('status', 'dashboard'):
+    if command == 'status':
+        prefix='[Обход не определён]'.encode('utf-8')
+        if os.name=='nt' and bb:
+            # BusyBox-w32 passes UTF-8 argv to native jq through the Windows
+            # ANSI code page. Real Linux/OpenWrt keeps the original UTF-8.
+            prefix=prefix.decode('cp1251').encode('utf-8')
+        assert p.stdout and all(line.startswith(prefix) for line in p.stdout.splitlines()), p.stdout
+    if command == 'dashboard':
         d = json.loads(p.stdout)
         assert d['error'] == 'BACKEND_AMBIGUOUS' and d['ready'] is False
 print('PASS: actual CLI version/config/status/dashboard dispatch; no live probes or starts')

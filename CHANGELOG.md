@@ -1,5 +1,9 @@
 ## 0.3.0-dev (unreleased)
 
+- 2026-11-19: dedicated current-bypass panel with Podkop/Forkop/Forkozz identity, native activity, engine state and verified-path status.
+- Persist the actual completed active-tunnel probe timestamp/result independently from page refresh and reserve probes; mark missing/stale data and reject false green after a failed manual probe.
+- Show the recorded bypass on every history row and command-output line; retain original job context across selection changes. Human-readable CLI status keeps JSON available through dashboard.
+
 - Independent AWG checks continue while sing-box is stopped; recover a healthy current tunnel before replacing it.
 - Explicit Podkop, Forkop (including owned interface children) and Forkozz/NetShift adapters, live backend detection and per-section reserve allowlist.
 - Persistent maintenance pause, read-only status/dashboard, separate failure counters and monotonic cooldown/hold.

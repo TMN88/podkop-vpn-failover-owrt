@@ -269,6 +269,52 @@ def production(*names):
     return '\n'.join(pieces)
 
 LOW_LEVEL = {
+    'check_time_records_completed_probe_and_keeps_active_separate': production('probe_interface', 'record_check') + r'''
+backend_choice=forkozz; select_backend || die select
+CURRENT=DE_custom
+probe_interface_impl() { PROBE_CODE=HEALTHY; return 0; }
+probe_interface DE_custom || die probe
+jq -e '.backend=="forkozz" and .interface=="DE_custom" and .result=="HEALTHY" and .code==0 and (.time|length)>10' "$STATE_DIR/last-active-check.json" >/dev/null || die active_metadata
+original="$(cat "$STATE_DIR/last-active-check.json")"
+probe_interface_impl() { PROBE_CODE=NO_HANDSHAKE; return 1; }
+probe_interface NL_2; rc=$?
+eq "$rc" 1 preserve_probe_rc
+eq "$(cat "$STATE_DIR/last-active-check.json")" "$original" reserve_does_not_replace_active
+jq -e '.interface=="NL_2" and .result=="NO_HANDSHAKE" and .code==1' "$STATE_DIR/last-check.json" >/dev/null || die failed_metadata
+promote_active_check NL_2
+eq "$(cat "$STATE_DIR/last-active-check.json")" "$original" do_not_promote_failure
+PROBE_CODE=HEALTHY; record_check NL_2 0
+original="$(cat "$STATE_DIR/last-check.json")"
+promote_active_check NL_2
+eq "$(jq -c . "$STATE_DIR/last-active-check.json")" "$(printf '%s' "$original" | jq -c .)" promote_without_new_time
+''',
+    'status_read_does_not_fabricate_time_and_rejects_stale_backend': production('show_dashboard', 'show_status', 'record_check') + r'''
+backend_choice=forkozz; active_netshift=1; active_podkop=0; select_backend || die select
+CURRENT=DE_custom; PROBE_CODE=HEALTHY
+record_check DE_custom 0 || die record
+original="$(cat "$STATE_DIR/last-active-check.json")"
+podkop_runtime_ready() { return 0; }
+show_dashboard > "$STATE_DIR/dash.json"
+jq -e '.backend_label=="Forkozz (NetShift)" and .backend_active and .last_active_check.result=="HEALTHY" and .check_fresh' "$STATE_DIR/dash.json" >/dev/null || die initial_metadata
+printf '%s\n' "$(config_fingerprint)" > "$STATE_DIR/confirmed-config"
+echo RECOVERED > "$STATE_DIR/state"
+show_dashboard > "$STATE_DIR/dash.json"
+jq -e '.ready==true' "$STATE_DIR/dash.json" >/dev/null || die verified
+PROBE_CODE=HTTPS_FAILURE; record_check DE_custom 1
+show_dashboard > "$STATE_DIR/dash.json"
+jq -e '.ready==false and .last_active_check.code==1' "$STATE_DIR/dash.json" >/dev/null || die false_green_after_manual_failure
+PROBE_CODE=HEALTHY; record_check DE_custom 0
+original="$(cat "$STATE_DIR/last-active-check.json")"
+show_status > "$STATE_DIR/status.txt" || die status
+awk '!/^\[Forkozz \(NetShift\)\] / {exit 1}' "$STATE_DIR/status.txt" || die wrong_status_name
+T=2000
+show_dashboard > "$STATE_DIR/dash.json"
+jq -e '.check_fresh==false and .last_check_age_seconds==1000' "$STATE_DIR/dash.json" >/dev/null || die stale
+eq "$(cat "$STATE_DIR/last-active-check.json")" "$original" read_only
+backend_choice=podkop
+show_dashboard > "$STATE_DIR/dash.json"
+jq -e '.last_active_check==null and .check_fresh==false' "$STATE_DIR/dash.json" >/dev/null || die wrong_backend_check
+''',
     'untrusted_manifest_directory_is_not_reaped': production('trusted_directory') + r'''
 stat() { echo 1000:700; }
 if trusted_directory "$STATE_DIR"; then die untrusted_owner; fi

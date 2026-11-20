@@ -75,7 +75,9 @@ case "${1:-}" in
         acquire_operation || exit 2
         reset_counters
         release_operation ;;
-    status|dashboard) show_dashboard ;;
+    status) show_status ;;
+    identity) say "$(backend_label)" ;;
+    dashboard) show_dashboard ;;
     test) show_test ;;
     check)
         valid_name "${2:-}" || exit 2
@@ -83,7 +85,7 @@ case "${1:-}" in
         CURRENT="$(get_current_interface)"
         if [ "$2" != "$CURRENT" ] && ! allowed_interface "$2"; then release_operation; exit 2; fi
         probe_interface "$2"; rc=$?
-        say "$2: $PROBE_CODE"
+        backend_line "$2: $PROBE_CODE"
         release_operation
         exit "$rc" ;;
     history) [ ! -r "$HISTORY_FILE" ] || cat "$HISTORY_FILE" ;;

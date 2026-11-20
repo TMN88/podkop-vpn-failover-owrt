@@ -53,13 +53,20 @@ job() {
     code="$(cat "$DIR/code" 2>/dev/null)"
     case "$code" in ''|*[!0-9]*) code=null ;; esac
     output="$(head -c 32768 "$DIR/output" 2>/dev/null)"
+    backend="$(cat "$DIR/backend" 2>/dev/null)"
+    section="$(cat "$DIR/section" 2>/dev/null)"
     jq -n --arg action "$action" --arg output "$output" --argjson running "$running" --argjson code "$code" \
-        '{action:$action,running:$running,code:$code,output:$output}'
+        --arg backend "$backend" --arg section "$section" \
+        '{action:$action,running:$running,code:$code,output:$output,backend:$backend,section:$section}'
 }
 case "${1:-}" in
     __job)
         # Private entry point: fixed commands only, never execute user-supplied shell text.
         trap 'rm -f "$DIR/lock/created"; rmdir "$DIR/lock" 2>/dev/null || :' EXIT
+        # Keep the command's own backend context even if selection changes later.
+        context="$("$PROG" dashboard)"
+        printf '%s' "$context" | jq -r '.backend // ""' > "$DIR/backend"
+        printf '%s' "$context" | jq -r '.section // ""' > "$DIR/section"
         case "${2:-}" in
             start|stop|restart) run_bounded "$CONTROL" "$2" ;;
             status|test|config|pause|resume|recover|reset) run_bounded "$PROG" "$2" ;;
@@ -89,7 +96,7 @@ case "${1:-}" in
                 fi
                 cut -d. -f1 /proc/uptime > "$DIR/lock/created"
                 printf '%s\n' "$action" > "$DIR/action"
-                : > "$DIR/output"; : > "$DIR/code"
+                : > "$DIR/output"; : > "$DIR/code"; : > "$DIR/backend"; : > "$DIR/section"
                 if command -v setsid >/dev/null 2>&1; then
                     setsid sh "$0" __job "$action" >/dev/null 2>&1 < /dev/null &
                 else

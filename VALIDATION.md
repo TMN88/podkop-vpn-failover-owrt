@@ -1,3 +1,11 @@
+# Bypass identity and last-check UI — 2026-11-20
+
+Added a dedicated current-bypass panel, native activity/engine/path status, real active-tunnel probe time/result, backend context on history rows and command output, and a human-readable CLI status. Dashboard remains JSON. Failed/stale/manual probes cannot retain a false green result; a verified reserve switch promotes the original probe timestamp without inventing a check time. Historical jobs/events keep their own backend identity.
+
+Local validation: 40 recovery/backend scenarios plus RPC job-context, installer, CLI dispatch, LuCI rendering/refresh/escaping/download checks and seven shell syntax checks passed. Saved run: `test-output/validation-20261119T191255Z/results.json`. This is mocked local validation; no router installation, live-client check or Tailscale action was performed. GitHub Actions is checked separately after publication. The installed UI on clients changes only after a separately authorized update.
+
+---
+
 # Validation: unreleased 0.3.0-dev
 
 Local recovery development on 2026-11-14: **38 mocked recovery scenarios passed**, plus RPC, actual CLI dispatch, installer state preservation, LuCI and seven shell syntax checks. The original stopped-runtime bug was reproduced offline against the 0.2.1 git object. See [local report](LOCAL-VALIDATION-2026-11-14.md) for evidence and limits, and [recovery/pilot protocol](RECOVERY.md).

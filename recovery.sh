@@ -29,6 +29,15 @@ trusted_directory() {
 }
 number() { case "$1" in ''|*[!0-9]*) return 1;; esac; }
 setting() { uci -q get "vpn_failover.main.$1" 2>/dev/null; }
+backend_label() {
+    case "${1:-$BACKEND}" in
+        podkop) printf 'Podkop';;
+        forkop) printf 'Forkop';;
+        forkozz) printf 'Forkozz (NetShift)';;
+        *) printf 'Обход не определён';;
+    esac
+}
+backend_line() { printf '[%s] %s\n' "$(backend_label)" "$*"; }
 numeric_setting() {
     local value
     value="$(setting "$1")"
@@ -473,7 +482,7 @@ https_targets() {
     awg_handshake || { PROBE_CODE=NO_HANDSHAKE; return 1; }
     PROBE_CODE=HTTPS_FAILURE; return 1
 }
-probe_interface() {
+probe_interface_impl() {
     local iface="$1" rc
     CURRENT_PROBE="$iface"; EGRESS=""; PROBE_CODE=TEST_UNAVAILABLE
     printf '%s\n' "$iface" > "$STATE_DIR/probing"
@@ -482,6 +491,36 @@ probe_interface() {
     prepare_routes "$DEVICE" || { PROBE_CODE=TEST_UNAVAILABLE; cleanup_routes "$OP_LOCK"; return 2; }
     https_targets "$DEVICE"; rc=$?
     cleanup_routes "$OP_LOCK" || { PROBE_CODE=TEST_UNAVAILABLE; return 2; }
+    return "$rc"
+}
+record_check() {
+    local iface="$1" rc="$2" tmp="$STATE_DIR/last-check.json.$$"
+    # Only a completed real probe writes this record. Page refresh/status must
+    # never manufacture a check time. The allowlist lock serializes writers.
+    jq -n --arg backend "$BACKEND" --arg section "$SECTION" --arg interface "$iface" \
+      --arg time "$(date '+%Y-%m-%dT%H:%M:%S%z')" --arg epoch "$(date +%s)" \
+      --arg monotonic "$(monotonic)" --arg boot "$(boot_id)" --arg result "$PROBE_CODE" --argjson code "$rc" \
+      '{backend:$backend,section:$section,interface:$interface,time:$time,epoch:$epoch,
+        monotonic:$monotonic,boot:$boot,result:$result,code:$code}' > "$tmp" || { rm -f "$tmp"; return 1; }
+    mv "$tmp" "$STATE_DIR/last-check.json" || return 1
+    if [ "$iface" = "$CURRENT" ]; then
+        cp "$STATE_DIR/last-check.json" "$STATE_DIR/last-active-check.json.$$" &&
+          mv "$STATE_DIR/last-active-check.json.$$" "$STATE_DIR/last-active-check.json"
+    fi
+}
+promote_active_check() {
+    local tmp="$STATE_DIR/last-active-check.json.$$"
+    [ -r "$STATE_DIR/last-check.json" ] || return 0
+    # A verified switch can make the most recently probed reserve current.
+    # Promote its original timestamp; never invent a new probe at apply time.
+    jq -ce --arg b "$BACKEND" --arg s "$SECTION" --arg i "$1" --arg boot "$(boot_id)" \
+      'select(.backend==$b and .section==$s and .interface==$i and .boot==$boot and .code==0 and .result=="HEALTHY")' \
+      "$STATE_DIR/last-check.json" > "$tmp" && mv "$tmp" "$STATE_DIR/last-active-check.json" || { rm -f "$tmp"; return 0; }
+}
+probe_interface() {
+    local rc
+    probe_interface_impl "$1"; rc=$?
+    record_check "$1" "$rc" || :
     return "$rc"
 }
 candidate_is_healthy() {
@@ -712,6 +751,7 @@ recover_interface() {
         event PATH_VERIFIED
         state RECOVERED
         event RECOVERED
+        promote_active_check "$target"
         printf '0\n' > "$FAIL_FILE"; printf '0\n' > "$STATE_DIR/runtime-failures"
         printf '%s\n' "$(( $(monotonic) + HOLD_SECONDS ))" > "$STATE_DIR/retry-at"
         printf '%s\t%s\t%s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$from" "$target" > "$LAST_SWITCH_FILE"
@@ -861,37 +901,69 @@ pause_control() {
     [ -z "$(uci -q changes vpn_failover)" ] || { say CONFIG_CHANGED_EXTERNALLY; return 3; }
     uci -q get vpn_failover.main >/dev/null 2>&1 || uci -q set vpn_failover.main=settings || return 1
     uci -q set "vpn_failover.main.paused=$value" && uci -q commit vpn_failover || return 1
-    say "paused=$value"
+    backend_line "paused=$value"
 }
 show_test() {
     local iface rc=0
-    acquire_operation || { say BUSY; return 2; }
+    acquire_operation || { backend_line BUSY; return 2; }
     CURRENT="$(get_current_interface)"
     for iface in $(discover_interfaces); do
         probe_interface "$iface"; rc=$?
-        say "$iface: $PROBE_CODE"
+        backend_line "$iface: $PROBE_CODE"
         remaining >/dev/null || break
     done
     release_operation
     return "$rc"
 }
-show_status() { show_dashboard; }
+show_status() {
+    show_dashboard | jq -r '
+      ("[" + .backend_label + "] ") as $p |
+      $p + "Текущий обход: " + .backend_label,
+      $p + "Секция: " + .section,
+      $p + "Служба Failover: " + (if .running then "работает" else "остановлена" end),
+      $p + "Служба/правила обхода: " + (if .backend_active then "обнаружены" else "не обнаружены" end),
+      $p + "sing-box: " + (if .runtime then "работает" else "остановлен или конфигурация не подтверждена" end),
+      $p + "Работоспособность обхода: " + (if .ready and .check_fresh then "подтверждена последней проверкой" else "не подтверждена" end),
+      $p + "Активный туннель: " + (if .current == "" then "не выбран" else .current end),
+      $p + "Последняя проверка активного туннеля: " + (.last_active_check.time // "ещё не выполнялась"),
+      $p + "Результат проверки: " + (.last_active_check.result // "нет данных"),
+      $p + "Состояние: " + .state + (if .reason == "" then "" else " / " + .reason end),
+      (if .error == "" then empty else $p + "Ошибка: " + .error end)'
+}
 show_dashboard() {
     local error="" runtime=false paused=false enabled=false running=false ready=false state reason runtime_reason
+    local backend_installed=false backend_active=false last_check last_active_check age=-1 check_fresh=false current
     select_backend || error="$BACKEND_ERROR"
     podkop_runtime_ready && runtime=true
     paused && paused=true
     "$INIT_SERVICE" enabled >/dev/null 2>&1 && enabled=true
     "$INIT_SERVICE" running >/dev/null 2>&1 && running=true
+    current="$(get_current_interface)"
+    if [ -n "$BACKEND" ] && [ -z "$error" ]; then
+        [ ! -x "$PODKOP_INIT" ] || backend_installed=true
+        adapter detect && backend_active=true
+    fi
+    last_check="$(jq -ce 'select(type == "object")' "$STATE_DIR/last-check.json" 2>/dev/null)"
+    last_active_check="$(jq -ce --arg b "$BACKEND" --arg s "$SECTION" --arg i "$current" --arg boot "$(boot_id)" \
+      'select(.backend == $b and .section == $s and .interface == $i and .boot == $boot)' "$STATE_DIR/last-active-check.json" 2>/dev/null)"
+    if [ -n "$last_active_check" ]; then
+        age="$(printf '%s' "$last_active_check" | jq -r '.monotonic // ""')"
+        if number "$age"; then age=$(( $(monotonic) - age )); else age=-1; fi
+        [ "$age" -lt 0 ] || [ "$age" -gt "$((CHECK_INTERVAL + OP_LIMIT + 15))" ] || check_fresh=true
+    fi
     state="$(cat "$STATE_DIR/state" 2>/dev/null)"; state="${state:-OBSERVING}"
     reason="$(cat "$STATE_DIR/reason" 2>/dev/null)"
     [ "$paused" != true ] || state=PAUSED
     if { [ "$state" = RECOVERED ] || { [ "$state" = OBSERVING ] && [ -z "$reason" ]; }; } && \
        [ "$runtime" = true ] && [ "$paused" = false ] && [ -z "$error" ] && \
        [ "$(cat "$STATE_DIR/confirmed-config" 2>/dev/null)" = "$(config_fingerprint)" ]; then ready=true; fi
+    if [ "$check_fresh" != true ] || ! printf '%s' "${last_active_check:-null}" | jq -e '.code==0 and .result=="HEALTHY"' >/dev/null 2>&1; then ready=false; fi
     runtime_reason=PROCESS_OR_CONFIG_UNAVAILABLE; [ "$runtime" != true ] || runtime_reason=RUNNING
     { [ ! -r "$HISTORY_FILE" ] || cat "$HISTORY_FILE"; } | jq -Rn \
-      --arg backend "$BACKEND" --arg section "$SECTION" --arg current "$(get_current_interface)" --arg error "$error" \
+      --arg backend "$BACKEND" --arg backend_label "$(backend_label)" --arg section "$SECTION" --arg current "$current" --arg error "$error" \
+      --argjson backend_installed "$backend_installed" --argjson backend_active "$backend_active" \
+      --argjson last_check "${last_check:-null}" --argjson last_active_check "${last_active_check:-null}" \
+      --argjson check_fresh "$check_fresh" --argjson check_age "$age" \
       --arg state "$state" --arg reason "$reason" --arg deadline "$(cat "$STATE_DIR/deadline" 2>/dev/null)" \
       --arg retry "$(cat "$STATE_DIR/retry-at" 2>/dev/null)" --arg op "$(cat "$OP_LOCK/pid" 2>/dev/null)" \
       --arg operation_id "$(cat "$OP_LOCK/id" 2>/dev/null)" --arg probing "$(cat "$STATE_DIR/probing" 2>/dev/null)" \
@@ -899,18 +971,23 @@ show_dashboard() {
       --arg last_switch "$(cat "$LAST_SWITCH_FILE" 2>/dev/null)" \
       --argjson runtime "$runtime" --argjson paused "$paused" --argjson running "$running" --argjson enabled "$enabled" --argjson ready "$ready" \
       --arg failures "$(counter "$FAIL_FILE")" --arg runtime_failures "$(counter "$STATE_DIR/runtime-failures")" \
-      '{backend:$backend,section:$section,current:$current,error:$error,state:$state,reason:$reason,runtime:$runtime,paused:$paused,
+      '{backend:$backend,backend_label:$backend_label,backend_installed:$backend_installed,backend_active:$backend_active,
+        last_check:$last_check,last_active_check:$last_active_check,check_fresh:$check_fresh,last_check_age_seconds:$check_age,
+        section:$section,current:$current,error:$error,state:$state,reason:$reason,runtime:$runtime,paused:$paused,
         running:$running,enabled:$enabled,ready:$ready,deadline_monotonic:$deadline,retry_monotonic:$retry,operation_pid:$op,
         installed:true,operation_id:$operation_id,probing:$probing,attempts:$attempts,runtime_reason:$runtime_reason,last_confirmed_switch:$last_switch,
         awg_failures:$failures,runtime_failures:$runtime_failures,
         events:([inputs | split("\t") | select(length == 8) |
           {time:.[0],backend:.[1],section:.[2],event:.[3],from:.[4],to:.[5],detail:.[6],epoch:.[7]}] | reverse)}'
 }
-show_config() {
+show_config_data() {
     printf 'VERSION=%s\nBACKEND=%s\nSECTION=%s\nCHECK_INTERVAL=%s\nFAIL_THRESHOLD=%s\nCANDIDATE_SUCCESS_THRESHOLD=%s\nSTARTUP_GRACE_PERIOD=%s\nNO_RESERVE_RETRY_INTERVAL=%s\nOP_LIMIT=%s\nRUNTIME_WAIT=%s\nHOLD_SECONDS=%s\n' \
       "$VERSION" "$BACKEND" "$SECTION" "$CHECK_INTERVAL" "$FAIL_THRESHOLD" "$CANDIDATE_SUCCESS_THRESHOLD" "$STARTUP_GRACE_PERIOD" "$NO_RESERVE_RETRY_INTERVAL" "$OP_LIMIT" "$RUNTIME_WAIT" "$HOLD_SECONDS"
     printf 'PAUSED=%s\nRECOVERY_ENABLED=%s\nALLOWED_INTERFACES=%s\n' \
       "$(if paused; then echo 1; else echo 0; fi)" \
       "$(if [ "$(setting recovery_enabled)" = 0 ]; then echo 0; else echo 1; fi)" "$(discover_interfaces | tr '\n' ' ')"
+}
+show_config() {
+    show_config_data | while IFS= read -r line; do backend_line "$line"; done
 }
 load_settings
