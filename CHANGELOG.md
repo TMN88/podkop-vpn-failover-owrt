@@ -1,3 +1,10 @@
+## 0.3.0-dev.2 (2026-11-20)
+
+- Wait for asynchronous Podkop/NetShift procd generation to finish and for the selected binding before engine checks or fallback start.
+- Assign a distinct development version for updating clients to the bypass identity/status and real last-check UI.
+- Recheck Forkozz auto selection with leftover Podkop configuration, the NetShift interface key and native reload/start targets.
+- Keep router installation and real failover validation separate from local/CI results; no router changes or Tailscale actions performed.
+
 ## 0.3.0-dev (unreleased)
 
 - 2026-11-19: dedicated current-bypass panel with Podkop/Forkop/Forkozz identity, native activity, engine state and verified-path status.

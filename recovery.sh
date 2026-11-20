@@ -581,6 +581,31 @@ backend_reload() {
 adapter_apply() {
     adapter apply
 }
+backend_applying() {
+    local data
+    # Podkop/NetShift init start returns after procd registration, while its
+    # one-shot /usr/bin/<backend> start may still be generating configuration.
+    # A long-lived Forkop watcher is not a generation job.
+    case "$BACKEND" in podkop|forkozz) ;; *) return 1;; esac
+    data="$(ubus call service list "{\"name\":\"$CONFIG_PACKAGE\"}" 2>/dev/null)" || return 1
+    [ -n "$data" ] || return 1
+    printf '%s' "$data" |
+      jq -e --arg p "$CONFIG_PACKAGE" --arg cmd "/usr/bin/$CONFIG_PACKAGE" \
+        '.[$p].instances // {} | any(.[]; .running == true and .command[0] == $cmd and .command[1] == "start")' >/dev/null 2>&1
+}
+wait_backend_applied() {
+    local n=0
+    while [ "$n" -lt "$RUNTIME_WAIT" ]; do
+        remaining >/dev/null && config_unchanged || return 3
+        # Allow procd to fork its registered child before concluding that the
+        # one-shot completed. Then require BOTH completion and new binding.
+        if [ "$n" -ge 2 ] && ! backend_applying && verify_podkop_binding "$OWNED_TO"; then return 0; fi
+        sleep 1; n=$((n + 1))
+    done
+    REASON=BACKEND_APPLY_TIMEOUT
+    verify_podkop_binding "$OWNED_TO" || REASON=CONFIG_BINDING_INVALID
+    return 1
+}
 ensure_started() {
     local until pid first_id n=0
     state STARTING_BACKEND
@@ -590,6 +615,7 @@ ensure_started() {
     runtime_log_cursor || { REASON=RUNTIME_LOG_UNAVAILABLE; return 1; }
     # Native generation/lifecycle first. Do not start sing-box with old binding.
     adapter_apply || { diagnose_backend; return 1; }
+    wait_backend_applied || return $?
     config_unchanged || return 3
     event BACKEND_STARTED
     verify_podkop_binding "$OWNED_TO" || { REASON=CONFIG_BINDING_INVALID; return 1; }

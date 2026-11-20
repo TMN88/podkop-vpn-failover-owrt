@@ -1,3 +1,11 @@
+# Forkozz review and update version — 2026-11-20
+
+Update version: **0.3.0-dev.2**. Rechecked Forkozz selection despite stale Podkop config, the `netshift.<section>.interface` field, and native NetShift reload/start commands. Fixed waiting for asynchronous one-shot generation after procd init start, before runtime binding checks or fallback engine start. Added bounded generation/completion tests and a procd filter that excludes completed jobs and unrelated watchers.
+
+Local verification passed: **44 backend/recovery scenarios**, RPC, installer-state, CLI, UI and seven syntax checks. Machine report: `test-output/validation-20261120T153305Z/results.json`. Production failover injection and installation of this new version on routers have not been performed; GitHub Actions is verified separately after publication. Passive observation of an older installed version does not establish physical acceptance of this new version.
+
+---
+
 # Bypass identity and last-check UI — 2026-11-20
 
 Added a dedicated current-bypass panel, native activity/engine/path status, real active-tunnel probe time/result, backend context on history rows and command output, and a human-readable CLI status. Dashboard remains JSON. Failed/stale/manual probes cannot retain a false green result; a verified reserve switch promotes the original probe timestamp without inventing a check time. Historical jobs/events keep their own backend identity.

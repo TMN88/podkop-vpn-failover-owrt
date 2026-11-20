@@ -1,6 +1,6 @@
 # VPN Failover recovery development
 
-Unreleased **0.3.0-dev** adds independent AWG probing and bounded runtime recovery for Podkop, Forkop and Forkozz/NetShift. Version 0.2.1 does not contain this fix.
+Development **0.3.0-dev.2** adds independent AWG probing and bounded runtime recovery for Podkop, Forkop and Forkozz/NetShift. Version 0.2.1 does not contain this fix.
 
 Pause Failover before stopping the routing backend for maintenance. `pause` persists; `resume` only clears it. Active, unpaused Failover can start a stopped backend/sing-box, without changing their boot enablement. `status`/`dashboard` and opening LuCI are read-only and never probe the network.
 

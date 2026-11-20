@@ -269,6 +269,65 @@ def production(*names):
     return '\n'.join(pieces)
 
 LOW_LEVEL = {
+    'netshift_procd_generation_filter_distinguishes_missing_completed_and_watcher': production('backend_applying') + r'''
+backend_choice=forkozz; select_backend || die select
+phase=missing
+ubus() {
+    case "$phase" in
+        missing) return 1;;
+        empty) return 0;;
+        applying) echo '{"netshift":{"instances":{"main":{"running":true,"command":["/usr/bin/netshift","start"]}}}}';;
+        completed) echo '{"netshift":{"instances":{"main":{"running":false,"command":["/usr/bin/netshift","start"]}}}}';;
+        watcher) echo '{"netshift":{"instances":{"main":{"running":true,"command":["/usr/bin/netshift","monitor"]}}}}';;
+    esac
+}
+for phase in missing empty completed watcher; do
+    if backend_applying; then die "not_generation_$phase"; fi
+done
+phase=applying
+backend_applying || die missed_active_generator
+''',
+    'netshift_waits_for_async_generator_even_if_old_binding_matches': production('wait_backend_applied') + r'''
+acquire_operation || die lock
+OWNED_TO=NL_2
+backend_applying() {
+    local n
+    n="$(counter "$STATE_DIR/generator-polls")"; echo "$((n+1))" > "$STATE_DIR/generator-polls"
+    [ "$n" -lt 3 ]
+}
+verify_podkop_binding() { return 0; }
+wait_backend_applied || die apply_wait
+[ "$(cat "$STATE_DIR/generator-polls")" -ge 4 ] || die premature_engine_start
+release_operation
+''',
+    'netshift_unfinished_generator_times_out_without_engine_start': production('wait_backend_applied') + r'''
+acquire_operation || die lock
+OWNED_TO=NL_2; RUNTIME_WAIT=3
+backend_applying() { return 0; }
+verify_podkop_binding() { return 0; }
+wait_backend_applied; rc=$?
+eq "$rc" 1
+eq "$REASON" BACKEND_APPLY_TIMEOUT
+release_operation
+''',
+    'forkozz_auto_select_write_and_lifecycle_never_target_podkop': production('adapter_apply') + r'''
+backend_choice=auto; active_podkop=0; active_forkop=0; active_netshift=1
+# Old podkop config is still present in the UCI fixture, but is not active.
+select_backend || die autodetect_forkozz
+eq "$BACKEND" forkozz
+eq "$INTERFACE_KEY" netshift.main.interface
+eq "$PODKOP_INIT" /etc/init.d/netshift
+acquire_operation || die lock
+EXPECTED_CONFIG="$(config_fingerprint)"
+adapter_set_interface NL_2 || die write
+eq "$cfg_iface" NL_2
+bounded() { shift; printf '%s\n' "$*" >> "$STATE_DIR/native-forkozz"; }
+runtime=1; adapter_apply || die reload
+runtime=0; adapter_apply || die start
+eq "$(cat "$STATE_DIR/native-forkozz")" "$(printf '%s\n' '/usr/bin/netshift reload' '/etc/init.d/netshift start')"
+! grep -q '/podkop' "$STATE_DIR/native-forkozz" || die wrong_service
+release_operation
+''',
     'check_time_records_completed_probe_and_keeps_active_separate': production('probe_interface', 'record_check') + r'''
 backend_choice=forkozz; select_backend || die select
 CURRENT=DE_custom

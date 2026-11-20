@@ -6,7 +6,7 @@ on:
       tag:
         description: 'Release tag matching VERSION in podkop-vpn-failover'
         required: true
-        default: 'v0.2.1'
+        default: 'v0.3.0-dev.2'
         type: string
       prerelease:
         description: 'Mark this GitHub Release as a prerelease'

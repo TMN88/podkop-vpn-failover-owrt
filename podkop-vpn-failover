@@ -4,7 +4,7 @@ umask 077
 # podkop-vpn-failover
 # AmneziaWG recovery for Podkop, Forkop and Forkozz/NetShift on OpenWrt.
 
-VERSION="0.3.0-dev"
+VERSION="0.3.0-dev.2"
 TAG="podkop-vpn-failover"
 
 # Health-check settings.
