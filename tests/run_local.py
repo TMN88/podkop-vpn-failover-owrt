@@ -33,7 +33,7 @@ for name, command in commands:
                     'pass_lines': output.count('PASS:')})
     print(('PASS' if p.returncode == 0 else 'FAIL') + ': ' + name, flush=True)
 report = {'scope': 'local mocked validation only; no routers/deployment',
-          'version': '0.3.0-dev.3', 'results': results}
+          'version': '0.3.0-dev.4', 'results': results}
 (out / 'results.json').write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
 print(str(out), flush=True)
 raise SystemExit(any(r['returncode'] != 0 for r in results))

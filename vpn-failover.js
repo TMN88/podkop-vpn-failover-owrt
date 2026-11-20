@@ -83,8 +83,16 @@ return view.extend({
         var summary=E('p',{'class':'pvf-summary'}), updated=E('p',{'class':'description'});
         var bypass=E('strong',{'class':'pvf-backend-name'}), bypassState=E('p',{'class':'pvf-backend-status'});
         var engineState=E('p',{'class':'pvf-engine-status'}), lastCheck=E('p',{'class':'pvf-last-check'});
+        var tunnelResults=E('div',{'class':'pvf-tunnel-results'}), tunnelCards=E('div',{},[]);
+        tunnelResults.appendChild(tunnelCards);
+        var checkControl=E('div',{},[]);
         var bypassPanel=E('div',{'class':'cbi-section pvf-backend-panel','style':'padding:16px;border-left:5px solid #777'},[
-            E('h3',{},['Текущий обход: ',bypass]),bypassState,engineState,lastCheck]);
+            E('h3',{},['Текущий обход: ',bypass]),
+            E('div',{'class':'pvf-status-cards','style':'display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px'},[
+                E('div',{'class':'cbi-section','style':'padding:12px'},[bypassState]),
+                E('div',{'class':'cbi-section','style':'padding:12px'},[engineState]),
+                E('div',{'class':'cbi-section','style':'padding:12px'},[lastCheck])]),
+            E('div',{'style':'display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:12px'},[tunnelResults,checkControl])]);
         var result=E('pre',{'style':'white-space:pre-wrap;max-height:22em;overflow:auto'});
         var resultBox=E('details',{},[E('summary',{},'Результат последней команды'),result]);
         var body=E('tbody',{},[]);
@@ -105,6 +113,14 @@ return view.extend({
             lastCheck.textContent=prefix+'Последняя проверка активного туннеля: '+checkTime(d.last_active_check)+
                 (d.last_active_check?' · '+d.last_active_check.interface+' · '+(d.last_active_check.result==='HEALTHY'?'туннель отвечает':(reasons[d.last_active_check.result]||d.last_active_check.result)):'')+
                 (d.last_active_check&&d.check_fresh===false?' · данные устарели':'');
+            var tr=(d.tunnel_checks||[]);
+            var cards=E('div',{},tr.length?tr.map(function(t){
+                var ok=t.result==='HEALTHY'&&t.code===0;
+                var color=ok?'#23783d':t.code===1?'#a32626':'#705300';
+                return E('span',{'class':'cbi-section','style':'display:inline-block;padding:8px 12px;border-radius:5px;border-left:4px solid '+color},
+                    t.interface+(t.interface===d.current?' · активный':' · резерв')+': '+(ok?'отвечал':(reasons[t.result]||(t.result?'проверка не пройдена':'ещё не проверялся')))+(t.time?' · '+checkTime(t):''));
+            }):[E('span',{'class':'cbi-section','style':'display:inline-block;padding:8px 12px'},'Туннели Failover не настроены')]);
+            tunnelResults.replaceChild(cards,tunnelCards);tunnelCards=cards;
             summary.textContent=prefix+'Версия '+(d.version||'—')+' · Failover: '+(d.running?'работает':'остановлен')+' · Автозапуск: '+(d.enabled?'включён':'выключен')+' · Секция: '+d.section+' · Туннель: '+(d.current||'не выбран');
             if(d.error) summary.textContent+=' · '+d.error;
             else if(d.paused) summary.textContent+=' · Пауза: движок не запускаем';
@@ -129,10 +145,10 @@ return view.extend({
                 .catch(function(e){busy=false;syncButtons();result.textContent=contextLines('Не удалось выполнить команду: '+e.message,state.backend);});
         }
         function button(label,name,style){var b=E('button',{'class':'cbi-button '+(style||''),'click':function(){return action(name);}},label);buttons.push(b);return b;}
+        checkControl.appendChild(button('Проверить туннели','test','cbi-button-action'));
         var controls=E('div',{'class':'pvf-controls','style':'display:flex;gap:8px;flex-wrap:wrap;margin:16px 0'},[
             button('Запустить','start','cbi-button-apply'),button('Остановить','stop','cbi-button-negative'),
-            button('Перезапустить','restart'),button('Статус','status'),button('Проверить туннели','test'),button('Настройки','config'),
-            button('Пауза','pause'),button('Продолжить','resume'),button('Восстановить сейчас','recover'),button('Сбросить счётчики','reset')]);
+            button('Перезапустить','restart')]);
         var download=E('button',{'class':'cbi-button cbi-button-action','click':function(){
             download.disabled=true;
             return diagnosticsRPC().then(function(d){
@@ -146,7 +162,7 @@ return view.extend({
         refresh(state,job);
         poll.add(function(){return pollOnce().catch(function(){updated.textContent=contextLines('Не удалось обновить данные. Показаны последние полученные сведения.',state.backend);});},5);
             return E('div',{},[E('h2',{},'VPN Failover'),bypassPanel,summary,controls,
-            E('p',{'class':'description'},'Перед обслуживанием поставь Failover на паузу или останови его службу, затем останавливай VPN-движок. Без паузы активная служба восстанавливает остановленный движок. «Продолжить» снимает паузу; «Запустить» включает автозапуск Failover, «Остановить» отключает его. Открытие страницы ничего не запускает.'),
+            E('p',{'class':'description'},'Запуск включает автозапуск. Перед обслуживанием VPN останови Failover. Остановка выключает наблюдение и автозапуск. Перезапуск применяет изменения службы.'),
             updated,resultBox,E('div',{'style':'margin:16px 0'},[download,E('p',{'class':'description'},'Диагностический JSON для разбора проблемы: состояние службы, настройки и исходные технические сообщения. Без VPN-ключей и полных конфигураций.')]),history]);
     },
     handleSave:null,handleSaveApply:null,handleReset:null

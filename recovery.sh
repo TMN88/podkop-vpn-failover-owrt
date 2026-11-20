@@ -204,6 +204,13 @@ discover_interfaces() {
     done | sort -u
 }
 allowed_interface() { discover_interfaces | grep -Fxq "$1"; }
+tunnel_inventory() {
+    { if valid_name "$1" && [ "$(uci -q get "network.$1.proto")" = amneziawg ]; then
+        printf '%s\n' "$1"
+      fi
+      discover_interfaces
+    } | sort -u
+}
 
 # Fingerprint both packages including outstanding UCI deltas. Only the hash,
 # never config values/keys/subscriptions, may leave the private operation.
@@ -522,6 +529,8 @@ record_check() {
       '{backend:$backend,section:$section,interface:$interface,time:$time,epoch:$epoch,
         monotonic:$monotonic,boot:$boot,result:$result,code:$code}' > "$tmp" || { rm -f "$tmp"; return 1; }
     mv "$tmp" "$STATE_DIR/last-check.json" || return 1
+    cp "$STATE_DIR/last-check.json" "$STATE_DIR/check-$iface.json.$$" &&
+      mv "$STATE_DIR/check-$iface.json.$$" "$STATE_DIR/check-$iface.json"
     if [ "$iface" = "$CURRENT" ]; then
         cp "$STATE_DIR/last-check.json" "$STATE_DIR/last-active-check.json.$$" &&
           mv "$STATE_DIR/last-active-check.json.$$" "$STATE_DIR/last-active-check.json"
@@ -962,16 +971,17 @@ pause_control() {
     backend_line "paused=$value"
 }
 show_test() {
-    local iface rc=0
+    local iface rc=0 overall=0
     acquire_operation || { backend_line BUSY; return 2; }
     CURRENT="$(get_current_interface)"
-    for iface in $(discover_interfaces); do
+    for iface in $(tunnel_inventory "$CURRENT"); do
         probe_interface "$iface"; rc=$?
+        [ "$rc" = 0 ] || overall=1
         backend_line "$iface: $PROBE_CODE"
-        remaining >/dev/null || break
+        remaining >/dev/null || { overall=1; break; }
     done
     release_operation
-    return "$rc"
+    return "$overall"
 }
 show_status() {
     show_dashboard | jq -r '
@@ -997,6 +1007,13 @@ show_dashboard() {
     "$INIT_SERVICE" enabled >/dev/null 2>&1 && enabled=true
     "$INIT_SERVICE" running >/dev/null 2>&1 && running=true
     current="$(get_current_interface)"
+    local iface tunnel_checks
+    tunnel_checks="$(for iface in $(tunnel_inventory "$current"); do
+        jq -nc --arg i "$iface" --arg b "$BACKEND" --arg s "$SECTION" '
+          ([inputs | select(.interface==$i and .backend==$b and .section==$s)] | first)
+          // {interface:$i}' "$STATE_DIR/check-$iface.json" 2>/dev/null ||
+          jq -nc --arg i "$iface" '{interface:$i}'
+    done | jq -sc .)"
     if [ -n "$BACKEND" ] && [ -z "$error" ]; then
         [ ! -x "$PODKOP_INIT" ] || backend_installed=true
         adapter detect && backend_active=true
@@ -1022,6 +1039,7 @@ show_dashboard() {
       --argjson backend_installed "$backend_installed" --argjson backend_active "$backend_active" \
       --argjson last_check "${last_check:-null}" --argjson last_active_check "${last_active_check:-null}" \
       --argjson check_fresh "$check_fresh" --argjson check_age "$age" \
+      --argjson tunnel_checks "${tunnel_checks:-[]}" \
       --arg state "$state" --arg reason "$reason" --arg deadline "$(cat "$STATE_DIR/deadline" 2>/dev/null)" \
       --arg retry "$(cat "$STATE_DIR/retry-at" 2>/dev/null)" --arg op "$(cat "$OP_LOCK/pid" 2>/dev/null)" \
       --arg operation_id "$(cat "$OP_LOCK/id" 2>/dev/null)" --arg probing "$(cat "$STATE_DIR/probing" 2>/dev/null)" \
@@ -1030,7 +1048,7 @@ show_dashboard() {
       --argjson runtime "$runtime" --argjson paused "$paused" --argjson running "$running" --argjson enabled "$enabled" --argjson ready "$ready" \
       --arg failures "$(counter "$FAIL_FILE")" --arg runtime_failures "$(counter "$STATE_DIR/runtime-failures")" \
       '{backend:$backend,backend_label:$backend_label,backend_installed:$backend_installed,backend_active:$backend_active,
-        last_check:$last_check,last_active_check:$last_active_check,check_fresh:$check_fresh,last_check_age_seconds:$check_age,
+        last_check:$last_check,last_active_check:$last_active_check,check_fresh:$check_fresh,last_check_age_seconds:$check_age,tunnel_checks:$tunnel_checks,
         section:$section,current:$current,error:$error,state:$state,reason:$reason,runtime:$runtime,paused:$paused,
         running:$running,enabled:$enabled,ready:$ready,deadline_monotonic:$deadline,retry_monotonic:$retry,operation_pid:$op,
         installed:true,operation_id:$operation_id,probing:$probing,attempts:$attempts,runtime_reason:$runtime_reason,last_confirmed_switch:$last_switch,

@@ -29,7 +29,7 @@ for command in ('version', 'config', 'status', 'dashboard'):
     assert p.returncode == 0, (command, p.stderr)
     assert b'forbidden_network_probe' not in p.stderr
     if command == 'version':
-        assert p.stdout.strip() == b'0.3.0-dev.3', p.stdout
+        assert p.stdout.strip() == b'0.3.0-dev.4', p.stdout
     if command == 'status':
         prefix='[Обход не определён]'.encode('utf-8')
         if os.name=='nt' and bb:

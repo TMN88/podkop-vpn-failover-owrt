@@ -23,9 +23,12 @@ const view=new Function('view','rpc','poll','E','URL','Blob','document','setTime
 function all(node,tag){if(!node||typeof node!=='object')return [];return (node.tag===tag?[node]:[]).concat((Array.isArray(node.children)?node.children:[]).flatMap(c=>all(c,tag)));}
 (async()=>{
     const page=view.render(await view.load());
-    const buttons=all(page,'button');assert.equal(buttons.length,11);
-    assert.deepEqual(buttons.slice(0,6).map(b=>b.children),['Запустить','Остановить','Перезапустить','Статус','Проверить туннели','Настройки']);
-    assert.deepEqual(buttons.slice(6,10).map(b=>b.children),['Пауза','Продолжить','Восстановить сейчас','Сбросить счётчики']);
+    const buttons=all(page,'button');assert.equal(buttons.length,5);
+    assert.deepEqual(buttons.map(b=>b.children),['Проверить туннели','Запустить','Остановить','Перезапустить','Скачать логи для диагностики']);
+    data={...data,tunnel_checks:[{interface:'awg1',result:'HEALTHY',code:0},{interface:'awg2',result:'HTTPS_FAILURE',code:1},{interface:'awg3'}]};
+    await tick();
+    for(const [i, status] of [['awg1','активный: отвечал'],['awg2','HTTPS через туннель не подтвердился'],['awg3','ещё не проверялся']])
+        assert(all(page,'span').some(n=>n.children.startsWith(i+' · ')&&n.children.includes(status)));
     const history=all(page,'details').find(d=>d.attrs.class==='pvf-history');assert(!history.open);
     history.open=true;await tick();assert.equal(history.open,true);
     const technical=all(page,'details').find(d=>d.attrs['data-event-key']);technical.open=true;
@@ -39,8 +42,8 @@ function all(node,tag){if(!node||typeof node!=='object')return [];return (node.t
     const originalCheck=named('pvf-last-check').textContent;
     await tick();assert.equal(named('pvf-last-check').textContent,originalCheck,'page refresh must not fabricate a check time');
     assert(all(page,'td').some(n=>n.children==='Forkozz (NetShift)'));
-    job={running:true,action:'start',code:null,output:''};await buttons[0].click();assert.equal(calls[0],'start');assert(buttons[0].disabled);
-    job={running:false,action:'start',backend:'forkozz',code:0,output:'started\nsecond line'};await tick();assert(!buttons[0].disabled);
+    job={running:true,action:'start',code:null,output:''};await buttons[1].click();assert.equal(calls[0],'start');assert(buttons[1].disabled);
+    job={running:false,action:'start',backend:'forkozz',code:0,output:'started\nsecond line'};await tick();assert(!buttons[1].disabled);
     assert(all(page,'pre').some(n=>n.textContent.includes('started')));
     assert(all(page,'pre').some(n=>n.textContent.includes('[Forkozz (NetShift)] second line')));
     for(const [backend,title] of [['podkop','Podkop'],['forkop','Forkop'],['forkozz','Forkozz (NetShift)']]){
@@ -53,8 +56,8 @@ function all(node,tag){if(!node||typeof node!=='object')return [];return (node.t
     assert(all(page,'td').some(n=>n.children==='Forkozz (NetShift)'),'historical event retains its real backend');
     assert(all(page,'pre').some(n=>n.textContent.includes('[Forkozz (NetShift)] started')),'job retains its original backend after selection changes');
     data={...data,backend:'forkozz',error:''};await tick();
-    runError=true;await buttons[4].click();assert(!buttons[4].disabled);assert(all(page,'pre').some(n=>n.textContent.includes('Busy')));
-    await buttons[10].click();assert(downloaded);const diag=JSON.parse(blob.text);assert.equal(diag.format,'vpn-failover-diagnostics-v1');assert.equal(diag.last_command.code,0);
+    runError=true;await buttons[0].click();assert(!buttons[0].disabled);assert(all(page,'pre').some(n=>n.textContent.includes('Busy')));
+    await buttons[4].click();assert(downloaded);const diag=JSON.parse(blob.text);assert.equal(diag.format,'vpn-failover-diagnostics-v1');assert.equal(diag.last_command.code,0);
     data={...data,events:[]};await tick();assert(all(page,'td').some(n=>n.children==='Операций пока нет.'));
     readError=true;await tick();assert(all(page,'p').some(n=>n.textContent.includes('Не удалось обновить')));
     console.log('PASS: unified controls, async job, errors, collapsible history, safe text, diagnostics download');
