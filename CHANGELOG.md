@@ -1,3 +1,9 @@
+## 0.3.0-dev.4 (2026-11-20)
+
+- Simplify LuCI to four primary controls and separate cards for bypass status, sing-box and the last check.
+- Show individual results and timestamps for the active and reserve AmneziaWG tunnels.
+- Report an unsuccessful manual check if any tunnel fails.
+
 ## 0.3.0-dev.3 (2026-11-20)
 
 - Support stock OpenWrt without stat while preserving private-directory ownership checks.
