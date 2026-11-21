@@ -6,7 +6,7 @@ on:
       tag:
         description: 'Release tag matching VERSION in podkop-vpn-failover'
         required: true
-        default: 'v0.3.0-dev.4'
+        default: 'v0.3.0-dev.5'
         type: string
       prerelease:
         description: 'Mark this GitHub Release as a prerelease'
@@ -60,4 +60,8 @@ jobs:
           [[ -n "${notes}" ]]
           args=(release create "${RELEASE_TAG}" --target "${GITHUB_SHA}" --title "podkop-vpn-failover-owrt ${RELEASE_TAG}" --notes "${notes}")
           [[ "${IS_PRERELEASE}" != "true" ]] || args+=(--prerelease)
-          gh "${args[@]}"
+          sed "s|/podkop-vpn-failover-owrt/main}|/podkop-vpn-failover-owrt/${RELEASE_TAG}}|" install.sh > install-openwrt.sh
+          grep -Fq "/podkop-vpn-failover-owrt/${RELEASE_TAG}}" install-openwrt.sh
+          sh -n install-openwrt.sh
+          sha256sum install-openwrt.sh > SHA256SUMS
+          gh "${args[@]}" install-openwrt.sh SHA256SUMS

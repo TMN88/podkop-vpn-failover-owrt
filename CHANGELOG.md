@@ -1,3 +1,9 @@
+## 0.3.0-dev.5 (2026-11-21)
+
+- Fix false RUNTIME_FATAL detection when NetShift reports a successful recovery.
+- Preserve detection of genuine sing-box fatal errors.
+- Publish a version-pinned OpenWrt installer and its SHA-256 checksum.
+
 ## 0.3.0-dev.4 (2026-11-20)
 
 - Simplify LuCI to four primary controls and separate cards for bypass status, sing-box and the last check.
