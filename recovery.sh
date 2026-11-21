@@ -695,7 +695,9 @@ runtime_no_fatal() {
         grep -Fxq "$cursor" "$OP_LOCK/logs.after" || return 1
         awk -v cursor="$cursor" '$0==cursor {seen=1; next} seen {print}' "$OP_LOCK/logs.after" > "$OP_LOCK/logs.new"
     else cp "$OP_LOCK/logs.after" "$OP_LOCK/logs.new"; fi
-    if grep -Eiq '(sing-box|sing_box).*(FATAL|panic|crash)|procd.*sing-box.*(crash|exit)' "$OP_LOCK/logs.new"; then
+    # NetShift logs this informational recovery summary after a successful restart.
+    if grep -Ev "[[:space:]]netshift: \\[info\\] NetShift recovered successfully after sing-box crash[[:space:]]*$" "$OP_LOCK/logs.new" |
+        grep -Eiq '(sing-box|sing_box).*(FATAL|panic|crash)|procd.*sing-box.*(crash|exit)'; then
         REASON=RUNTIME_FATAL; return 1
     fi
     REASON=""; return 0

@@ -545,6 +545,8 @@ runtime_log_cursor || die cursor
 runtime_no_fatal || die old_fatal
 for n in $(seq 1 250); do echo "generation progress $n"; done >> "$STATE_DIR/system-log"
 runtime_no_fatal || die busy_generation_lost_cursor
+echo 'Fri Nov 20 23:21:12 2026 user.notice netshift: [info] NetShift recovered successfully after sing-box crash' >> "$STATE_DIR/system-log"
+runtime_no_fatal || die netshift_recovery_notice_treated_as_fatal
 echo 'new daemon.err sing-box[2]: FATAL downloading rule-set' >> "$STATE_DIR/system-log"
 if runtime_no_fatal; then die fresh_fatal_ignored; fi
 eq "$REASON" RUNTIME_FATAL
